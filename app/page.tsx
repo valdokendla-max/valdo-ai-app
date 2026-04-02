@@ -14,7 +14,7 @@ export default function ValdoAI() {
   const [knowledgeOpen, setKnowledgeOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const { messages, sendMessage, status, setMessages } = useChat({
+  const { messages, sendMessage, status, setMessages, error } = useChat({
     transport: new DefaultChatTransport({ api: '/api/chat' }),
   })
 
@@ -64,6 +64,13 @@ export default function ValdoAI() {
                 </div>
               </div>
             )}
+            {error && (
+              <div className="px-4 py-3">
+                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {error.message || 'AI teenusega ühendamine ebaõnnestus.'}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -73,6 +80,7 @@ export default function ValdoAI() {
         setInput={setInput}
         onSubmit={handleSubmit}
         isLoading={isLoading}
+        error={error?.message}
       />
     </div>
   )

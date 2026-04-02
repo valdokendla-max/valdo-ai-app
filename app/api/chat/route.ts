@@ -33,6 +33,15 @@ function extractText(msg: UIMessage): string {
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json()
 
+  if (!process.env.GROQ_API_KEY) {
+    return new Response(
+      JSON.stringify({
+        error: 'GROQ_API_KEY is missing. Add it to your environment variables.',
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+
   const knowledgeContext = knowledgeStore.getContext()
   const system = BASE_SYSTEM + knowledgeContext
 
@@ -60,7 +69,10 @@ export async function POST(req: Request) {
 
   if (!response.ok) {
     const error = await response.text()
-    return new Response(JSON.stringify({ error }), { status: response.status })
+    return new Response(JSON.stringify({ error }), {
+      status: response.status,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 
   const encoder = new TextEncoder()

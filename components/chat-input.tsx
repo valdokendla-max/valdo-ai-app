@@ -9,9 +9,10 @@ interface ChatInputProps {
   setInput: (value: string) => void
   onSubmit: () => void
   isLoading: boolean
+  error?: string
 }
 
-export function ChatInput({ input, setInput, onSubmit, isLoading }: ChatInputProps) {
+export function ChatInput({ input, setInput, onSubmit, isLoading, error }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -62,9 +63,15 @@ export function ChatInput({ input, setInput, onSubmit, isLoading }: ChatInputPro
             )}
           </button>
         </div>
-        <p className="mt-2 text-center text-xs text-muted-foreground">
-          Valdo AI - Sinu privaatne assistent
-        </p>
+        {error ? (
+          <p className="mt-2 text-center text-xs text-red-400">
+            {error}
+          </p>
+        ) : (
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            Valdo AI - Sinu privaatne assistent
+          </p>
+        )}
       </div>
     </div>
   )
