@@ -73,5 +73,6 @@ Märkused:
 - COMFYUI_BASE_URL peab olema serverist kättesaadav ComfyUI endpoint.
 - COMFYUI_CHECKPOINT_NAME peab täpselt vastama sinu ComfyUI-s olemasoleva mudelifaili nimele.
 - Kui ComfyUI kasutab autentimist, lisa COMFYUI_API_KEY.
+- Kui COMFYUI_BASE_URL on olemas, pannakse pilditöö ComfyUI järjekorda ja UI kontrollib selle olekut eraldi, nii et brauser ei jää ühe pika requesti taha kinni.
 - Kui REPLICATE_API_TOKEN puudub, proovib app kasutada ComfyUI backendit.
 - UI-s saad pildireziimi sisse lülitada nupuga Loo pilt.

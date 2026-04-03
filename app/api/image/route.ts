@@ -11,6 +11,14 @@ type ComfyImage = {
   type?: string
 }
 
+type ImageJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found'
+
+type ImageStatusResponse = {
+  status: ImageJobStatus
+  imageDataUrl?: string
+  error?: string
+}
+
 function getComfyHeaders() {
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -121,6 +129,167 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+async function fetchComfyImageDataUrl(
+  baseUrl: string,
+  image: ComfyImage,
+  signal?: AbortSignal
+) {
+  const params = new URLSearchParams({
+    filename: image.filename,
+    subfolder: image.subfolder || '',
+    type: image.type || 'output',
+  })
+
+  const imageResponse = await fetch(`${baseUrl}/view?${params.toString()}`, {
+    headers: process.env.COMFYUI_API_KEY
+      ? { Authorization: `Bearer ${process.env.COMFYUI_API_KEY}` }
+      : undefined,
+    signal,
+    cache: 'no-store',
+  })
+
+  if (!imageResponse.ok) {
+    const error = await imageResponse.text()
+    throw new Error(error)
+  }
+
+  const contentType = imageResponse.headers.get('content-type') || 'image/png'
+  const buffer = Buffer.from(await imageResponse.arrayBuffer())
+  return `data:${contentType};base64,${buffer.toString('base64')}`
+}
+
+function getHistoryError(historyEntry: any) {
+  const status = historyEntry?.status
+
+  if (!status || typeof status !== 'object') {
+    return null
+  }
+
+  return (
+    status?.messages?.find?.(
+      (message: unknown) =>
+        typeof message === 'object' &&
+        message !== null &&
+        'type' in message &&
+        (message as { type?: string }).type === 'execution_error'
+    ) as { data?: { exception_message?: string } } | undefined
+  )?.data?.exception_message || null
+}
+
+async function getComfyJobStatus(
+  promptId: string,
+  signal?: AbortSignal
+): Promise<ImageStatusResponse> {
+  const baseUrl = process.env.COMFYUI_BASE_URL?.replace(/\/$/, '')
+
+  if (!baseUrl) {
+    return {
+      status: 'failed',
+      error: 'COMFYUI_BASE_URL is missing.',
+    }
+  }
+
+  const historyResponse = await fetch(`${baseUrl}/history/${promptId}`, {
+    headers: getComfyHeaders(),
+    signal,
+    cache: 'no-store',
+  })
+
+  if (!historyResponse.ok) {
+    throw new Error(`ComfyUI history request failed with status ${historyResponse.status}.`)
+  }
+
+  const history = await historyResponse.json()
+  const historyEntry = history?.[promptId]
+
+  if (historyEntry) {
+    const image = getFirstImage(historyEntry)
+
+    if (image) {
+      return {
+        status: 'succeeded',
+        imageDataUrl: await fetchComfyImageDataUrl(baseUrl, image, signal),
+      }
+    }
+
+    const historyError = getHistoryError(historyEntry)
+    if (historyError) {
+      return {
+        status: 'failed',
+        error: historyError,
+      }
+    }
+  }
+
+  const queueResponse = await fetch(`${baseUrl}/queue`, {
+    headers: getComfyHeaders(),
+    signal,
+    cache: 'no-store',
+  })
+
+  if (!queueResponse.ok) {
+    return historyEntry
+      ? { status: 'running' }
+      : { status: 'not_found', error: 'ComfyUI queue request failed.' }
+  }
+
+  const queue = (await queueResponse.json()) as {
+    queue_running?: Array<unknown[]>
+    queue_pending?: Array<unknown[]>
+  }
+
+  const isRunning = (queue.queue_running || []).some((entry) => entry?.[1] === promptId)
+  if (isRunning) {
+    return { status: 'running' }
+  }
+
+  const isQueued = (queue.queue_pending || []).some((entry) => entry?.[1] === promptId)
+  if (isQueued) {
+    return { status: 'queued' }
+  }
+
+  return historyEntry ? { status: 'running' } : { status: 'not_found' }
+}
+
+async function queueComfyUIImage(prompt: string, signal: AbortSignal) {
+  const baseUrl = process.env.COMFYUI_BASE_URL?.replace(/\/$/, '')
+
+  if (!baseUrl) {
+    return null
+  }
+
+  let workflow: Record<string, unknown>
+
+  try {
+    workflow = buildWorkflow(prompt.trim())
+  } catch (error) {
+    throw new Error(
+      error instanceof Error ? error.message : 'Failed to build ComfyUI workflow.'
+    )
+  }
+
+  const clientId = crypto.randomUUID()
+  const promptResponse = await fetch(`${baseUrl}/prompt`, {
+    method: 'POST',
+    headers: getComfyHeaders(),
+    body: JSON.stringify({ prompt: workflow, client_id: clientId }),
+    signal,
+  })
+
+  if (!promptResponse.ok) {
+    const error = await promptResponse.text()
+    throw new Error(error)
+  }
+
+  const promptData = (await promptResponse.json()) as { prompt_id?: string }
+
+  if (!promptData.prompt_id) {
+    throw new Error('ComfyUI did not return a prompt_id.')
+  }
+
+  return { promptId: promptData.prompt_id }
+}
+
 async function createReplicateImage(prompt: string, signal: AbortSignal) {
   const token = process.env.REPLICATE_API_TOKEN
 
@@ -209,91 +378,58 @@ async function createReplicateImage(prompt: string, signal: AbortSignal) {
 }
 
 async function createComfyUIImage(prompt: string, signal: AbortSignal) {
-  const baseUrl = process.env.COMFYUI_BASE_URL?.replace(/\/$/, '')
+  const queuedJob = await queueComfyUIImage(prompt, signal)
 
-  if (!baseUrl) {
+  if (!queuedJob) {
     return null
   }
-
-  let workflow: Record<string, unknown>
-
-  try {
-    workflow = buildWorkflow(prompt.trim())
-  } catch (error) {
-    throw new Error(
-      error instanceof Error ? error.message : 'Failed to build ComfyUI workflow.'
-    )
-  }
-
-  const clientId = crypto.randomUUID()
-  const promptResponse = await fetch(`${baseUrl}/prompt`, {
-    method: 'POST',
-    headers: getComfyHeaders(),
-    body: JSON.stringify({ prompt: workflow, client_id: clientId }),
-    signal,
-  })
-
-  if (!promptResponse.ok) {
-    const error = await promptResponse.text()
-    throw new Error(error)
-  }
-
-  const promptData = (await promptResponse.json()) as { prompt_id?: string }
-
-  if (!promptData.prompt_id) {
-    throw new Error('ComfyUI did not return a prompt_id.')
-  }
-
-  let image: ComfyImage | null = null
 
   for (let attempt = 0; attempt < 180; attempt++) {
     await sleep(1000)
 
-    const historyResponse = await fetch(`${baseUrl}/history/${promptData.prompt_id}`, {
-      headers: getComfyHeaders(),
-      signal,
-      cache: 'no-store',
+    const status = await getComfyJobStatus(queuedJob.promptId, signal)
+
+    if (status.status === 'succeeded' && status.imageDataUrl) {
+      return status.imageDataUrl
+    }
+
+    if (status.status === 'failed') {
+      throw new Error(status.error || 'ComfyUI image generation failed.')
+    }
+  }
+
+  throw new Error('Image generation timed out before ComfyUI returned an image.')
+}
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const promptId = searchParams.get('promptId')
+
+  if (!promptId) {
+    return new Response(JSON.stringify({ error: 'promptId is required.' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
     })
-
-    if (!historyResponse.ok) {
-      continue
-    }
-
-    const history = await historyResponse.json()
-    const historyEntry = history?.[promptData.prompt_id]
-    image = getFirstImage(historyEntry)
-
-    if (image) {
-      break
-    }
   }
 
-  if (!image) {
-    throw new Error('Image generation timed out before ComfyUI returned an image.')
+  try {
+    const status = await getComfyJobStatus(promptId, req.signal)
+
+    return new Response(JSON.stringify(status), {
+      headers: { 'Content-Type': 'application/json' },
+    })
+  } catch (error) {
+    return new Response(
+      JSON.stringify({
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Image status check failed.',
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
   }
-
-  const params = new URLSearchParams({
-    filename: image.filename,
-    subfolder: image.subfolder || '',
-    type: image.type || 'output',
-  })
-
-  const imageResponse = await fetch(`${baseUrl}/view?${params.toString()}`, {
-    headers: process.env.COMFYUI_API_KEY
-      ? { Authorization: `Bearer ${process.env.COMFYUI_API_KEY}` }
-      : undefined,
-    signal,
-    cache: 'no-store',
-  })
-
-  if (!imageResponse.ok) {
-    const error = await imageResponse.text()
-    throw new Error(error)
-  }
-
-  const contentType = imageResponse.headers.get('content-type') || 'image/png'
-  const buffer = Buffer.from(await imageResponse.arrayBuffer())
-  return `data:${contentType};base64,${buffer.toString('base64')}`
 }
 
 export async function POST(req: Request) {
@@ -307,18 +443,40 @@ export async function POST(req: Request) {
   }
 
   try {
+    const trimmedPrompt = prompt.trim()
+    const hasComfy = Boolean(process.env.COMFYUI_BASE_URL)
+
+    if (hasComfy) {
+      const queuedJob = await queueComfyUIImage(trimmedPrompt, req.signal)
+
+      if (!queuedJob) {
+        throw new Error('ComfyUI is not configured.')
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: 'queued',
+          promptId: queuedJob.promptId,
+        }),
+        {
+          status: 202,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
     let imageDataUrl: string | null = null
     let lastError: Error | null = null
 
     try {
-      imageDataUrl = await createReplicateImage(prompt.trim(), req.signal)
+      imageDataUrl = await createReplicateImage(trimmedPrompt, req.signal)
     } catch (error) {
       lastError = error instanceof Error ? error : new Error('Replicate image generation failed.')
     }
 
     if (!imageDataUrl) {
       try {
-        imageDataUrl = await createComfyUIImage(prompt.trim(), req.signal)
+        imageDataUrl = await createComfyUIImage(trimmedPrompt, req.signal)
       } catch (error) {
         lastError = error instanceof Error ? error : new Error('ComfyUI image generation failed.')
       }

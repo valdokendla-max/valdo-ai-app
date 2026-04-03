@@ -55,7 +55,7 @@ export function ChatInput({
             {isImageMode ? 'Tekstireziim' : 'Loo pilt'}
           </button>
           <p className="text-xs text-muted-foreground">
-            {isImageMode ? 'Saadan prompti pildigeneraatorile' : 'Saadan prompti tekstimudelile'}
+            {isImageMode ? 'Saadan sinu kirjelduse ComfyUI pildigeneraatorile' : 'Saadan prompti tekstimudelile'}
           </p>
         </div>
         <div className="flex items-end gap-2 rounded-2xl border border-border bg-card p-2 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
@@ -98,7 +98,7 @@ export function ChatInput({
         ) : (
           <p className="mt-2 text-center text-xs text-muted-foreground">
             {isImageMode
-              ? 'Pildid tulevad ComfyUI kaudu sinu enda backendist'
+              ? 'Kirjuta siia ainult pildi kirjeldus. Midagi siia eraldi seadistama ei pea.'
               : 'Valdo AI - Sinu privaatne assistent'}
           </p>
         )}

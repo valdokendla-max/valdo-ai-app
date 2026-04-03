@@ -10,11 +10,34 @@ import { ChatInput } from '@/components/chat-input'
 import { ChatWelcome } from '@/components/chat-welcome'
 import { KnowledgePanel } from '@/components/knowledge-panel'
 
+type ImageJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found'
+
+type ImageStatusResponse = {
+  status: ImageJobStatus
+  imageDataUrl?: string
+  error?: string
+}
+
 function createTextMessage(role: 'user' | 'assistant', text: string): UIMessage {
   return {
     id: crypto.randomUUID(),
     role,
     parts: [{ type: 'text', text }],
+  }
+}
+
+function buildImageStatusText(prompt: string, status: Exclude<ImageJobStatus, 'succeeded'>) {
+  switch (status) {
+    case 'queued':
+      return `Pildi loomine on järjekorras: **${prompt}**`
+    case 'running':
+      return `Loon pilti promptist: **${prompt}**`
+    case 'failed':
+      return `Pildi loomine ebaõnnestus promptiga: **${prompt}**`
+    case 'not_found':
+      return `Pildi töö kadus järjekorrast enne valmimist: **${prompt}**`
+    default:
+      return 'Loon pilti...'
   }
 }
 
@@ -47,13 +70,68 @@ export default function ValdoAI() {
     setInput('')
   }
 
+  const replaceMessageText = (messageId: string, text: string) => {
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId ? { ...message, parts: [{ type: 'text', text }] } : message
+      )
+    )
+  }
+
+  const pollImageJob = async (promptId: string, placeholderId: string, prompt: string) => {
+    for (let attempt = 0; attempt < 90; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 4000))
+
+      const response = await fetch(`/api/image?promptId=${encodeURIComponent(promptId)}`, {
+        cache: 'no-store',
+      })
+
+      const data = (await response.json()) as ImageStatusResponse
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Pildi oleku kontroll ebaõnnestus.')
+      }
+
+      if (data.status === 'succeeded' && data.imageDataUrl) {
+        const assistantMessage = createTextMessage(
+          'assistant',
+          `Loodud pilt promptist: **${prompt}**\n\n![Loodud pilt](${data.imageDataUrl})`
+        )
+
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === placeholderId ? assistantMessage : message
+          )
+        )
+        return
+      }
+
+      if (data.status === 'failed') {
+        throw new Error(data.error || 'Pildi loomine ebaõnnestus.')
+      }
+
+      if (data.status === 'not_found' && attempt > 5) {
+        throw new Error('ComfyUI ei leidnud enam seda tööd üles.')
+      }
+
+      if (data.status === 'queued' || data.status === 'running' || data.status === 'not_found') {
+        replaceMessageText(placeholderId, buildImageStatusText(prompt, data.status))
+      }
+    }
+
+    throw new Error('Pildi loomine võtab liiga kaua aega. Kontrolli hiljem uuesti.')
+  }
+
   const handleImageSubmit = async () => {
     const prompt = input.trim()
 
     if (!prompt || isBusy) return
 
     const userMessage = createTextMessage('user', prompt)
-    const placeholderMessage = createTextMessage('assistant', 'Loon pilti...')
+    const placeholderMessage = createTextMessage(
+      'assistant',
+      buildImageStatusText(prompt, 'queued')
+    )
 
     setImageError(undefined)
     setIsImageLoading(true)
@@ -73,16 +151,25 @@ export default function ValdoAI() {
         throw new Error(data.error || 'Pildi loomine ebaõnnestus.')
       }
 
-      const assistantMessage = createTextMessage(
-        'assistant',
-        `Loodud pilt promptist: **${prompt}**\n\n![Loodud pilt](${data.imageDataUrl})`
-      )
-
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === placeholderMessage.id ? assistantMessage : message
+      if (data.imageDataUrl) {
+        const assistantMessage = createTextMessage(
+          'assistant',
+          `Loodud pilt promptist: **${prompt}**\n\n![Loodud pilt](${data.imageDataUrl})`
         )
-      )
+
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === placeholderMessage.id ? assistantMessage : message
+          )
+        )
+        return
+      }
+
+      if (!data.promptId) {
+        throw new Error('Pilditöö ei tagastanud töö ID-d.')
+      }
+
+      await pollImageJob(data.promptId, placeholderMessage.id, prompt)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Pildi loomine ebaõnnestus.'
       setImageError(message)
