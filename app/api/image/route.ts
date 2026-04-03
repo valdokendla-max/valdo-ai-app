@@ -30,10 +30,10 @@ function buildWorkflow(prompt: string) {
     throw new Error('COMFYUI_CHECKPOINT_NAME is missing.')
   }
 
-  const width = Number(process.env.COMFYUI_WIDTH || 512)
-  const height = Number(process.env.COMFYUI_HEIGHT || 512)
-  const steps = Number(process.env.COMFYUI_STEPS || 8)
-  const cfg = Number(process.env.COMFYUI_CFG || 3)
+  const width = Number(process.env.COMFYUI_WIDTH || 384)
+  const height = Number(process.env.COMFYUI_HEIGHT || 384)
+  const steps = Number(process.env.COMFYUI_STEPS || 4)
+  const cfg = Number(process.env.COMFYUI_CFG || 2.5)
   const samplerName = process.env.COMFYUI_SAMPLER || 'euler'
   const scheduler = process.env.COMFYUI_SCHEDULER || 'normal'
   const negativePrompt =
