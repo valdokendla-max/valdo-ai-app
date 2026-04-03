@@ -18,12 +18,33 @@ type ImageStatusResponse = {
   error?: string
 }
 
+const GENERATED_IMAGE_MARKDOWN_REGEX = /!\[[^\]]*\]\(data:image\/[^)]+\)/g
+
 function createTextMessage(role: 'user' | 'assistant', text: string): UIMessage {
   return {
     id: crypto.randomUUID(),
     role,
     parts: [{ type: 'text', text }],
   }
+}
+
+function sanitizeMessagesForChatModel(messages: UIMessage[]) {
+  return messages.map((message) => ({
+    ...message,
+    parts: message.parts?.map((part) => {
+      if (part.type !== 'text') {
+        return part
+      }
+
+      return {
+        ...part,
+        text: part.text.replace(
+          GENERATED_IMAGE_MARKDOWN_REGEX,
+          '[Genereeritud pilt jäeti tekstimudeli kontekstist välja.]'
+        ),
+      }
+    }),
+  }))
 }
 
 function buildImageStatusText(prompt: string, status: Exclude<ImageJobStatus, 'succeeded'>) {
@@ -50,7 +71,18 @@ export default function ValdoAI() {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const { messages, sendMessage, status, setMessages, error } = useChat({
-    transport: new DefaultChatTransport({ api: '/api/chat' }),
+    transport: new DefaultChatTransport({
+      api: '/api/chat',
+      prepareSendMessagesRequest: ({ id, messages, body, trigger, messageId }) => ({
+        body: {
+          ...body,
+          id,
+          messages: sanitizeMessagesForChatModel(messages),
+          trigger,
+          messageId,
+        },
+      }),
+    }),
   })
 
   const isLoading = status === 'streaming' || status === 'submitted'
