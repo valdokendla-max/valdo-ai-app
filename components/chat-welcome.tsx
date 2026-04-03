@@ -8,9 +8,9 @@ interface ChatWelcomeProps {
 
 const suggestions = [
   'Selgita mulle kvantarvutuse pohimotteid',
+  'Loo pilt udusest metsast kuuvalguses',
   'Kirjuta Python skript failide sorteerimiseks',
   'Mis on parimad produktiivsuse nipid?',
-  'Aita mul kirjutada professionaalne e-kiri',
 ]
 
 export function ChatWelcome({ onSuggestionClick }: ChatWelcomeProps) {

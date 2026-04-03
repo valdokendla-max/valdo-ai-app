@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useEffect } from 'react'
-import { ArrowUp, Loader2 } from 'lucide-react'
+import { ArrowUp, ImagePlus, Loader2, MessageSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface ChatInputProps {
@@ -10,9 +10,19 @@ interface ChatInputProps {
   onSubmit: () => void
   isLoading: boolean
   error?: string
+  isImageMode: boolean
+  onToggleImageMode: () => void
 }
 
-export function ChatInput({ input, setInput, onSubmit, isLoading, error }: ChatInputProps) {
+export function ChatInput({
+  input,
+  setInput,
+  onSubmit,
+  isLoading,
+  error,
+  isImageMode,
+  onToggleImageMode,
+}: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -30,6 +40,24 @@ export function ChatInput({ input, setInput, onSubmit, isLoading, error }: ChatI
   return (
     <div className="border-t border-border bg-background px-4 py-4">
       <div className="mx-auto max-w-3xl">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <button
+            onClick={onToggleImageMode}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors',
+              isImageMode
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80'
+            )}
+            type="button"
+          >
+            {isImageMode ? <MessageSquare className="h-3.5 w-3.5" /> : <ImagePlus className="h-3.5 w-3.5" />}
+            {isImageMode ? 'Tekstireziim' : 'Loo pilt'}
+          </button>
+          <p className="text-xs text-muted-foreground">
+            {isImageMode ? 'Saadan prompti pildigeneraatorile' : 'Saadan prompti tekstimudelile'}
+          </p>
+        </div>
         <div className="flex items-end gap-2 rounded-2xl border border-border bg-card p-2 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
           <textarea
             ref={textareaRef}
@@ -41,7 +69,7 @@ export function ChatInput({ input, setInput, onSubmit, isLoading, error }: ChatI
                 handleSubmit()
               }
             }}
-            placeholder="Kirjuta siia..."
+            placeholder={isImageMode ? 'Kirjelda pilti, mida soovid luua...' : 'Kirjuta siia...'}
             rows={1}
             className="flex-1 resize-none bg-transparent px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             disabled={isLoading}
@@ -69,7 +97,9 @@ export function ChatInput({ input, setInput, onSubmit, isLoading, error }: ChatI
           </p>
         ) : (
           <p className="mt-2 text-center text-xs text-muted-foreground">
-            Valdo AI - Sinu privaatne assistent
+            {isImageMode
+              ? 'Pildid tulevad ComfyUI kaudu sinu enda backendist'
+              : 'Valdo AI - Sinu privaatne assistent'}
           </p>
         )}
       </div>
