@@ -1,4 +1,4 @@
-export const maxDuration = 60
+export const maxDuration = 300
 
 const DEFAULT_NEGATIVE_PROMPT =
   'low quality, blurry, distorted, deformed, bad anatomy, extra fingers, watermark, text'
@@ -30,10 +30,10 @@ function buildWorkflow(prompt: string) {
     throw new Error('COMFYUI_CHECKPOINT_NAME is missing.')
   }
 
-  const width = Number(process.env.COMFYUI_WIDTH || 1024)
-  const height = Number(process.env.COMFYUI_HEIGHT || 1024)
-  const steps = Number(process.env.COMFYUI_STEPS || 30)
-  const cfg = Number(process.env.COMFYUI_CFG || 4)
+  const width = Number(process.env.COMFYUI_WIDTH || 512)
+  const height = Number(process.env.COMFYUI_HEIGHT || 512)
+  const steps = Number(process.env.COMFYUI_STEPS || 8)
+  const cfg = Number(process.env.COMFYUI_CFG || 3)
   const samplerName = process.env.COMFYUI_SAMPLER || 'euler'
   const scheduler = process.env.COMFYUI_SCHEDULER || 'normal'
   const negativePrompt =
@@ -246,7 +246,7 @@ async function createComfyUIImage(prompt: string, signal: AbortSignal) {
 
   let image: ComfyImage | null = null
 
-  for (let attempt = 0; attempt < 50; attempt++) {
+  for (let attempt = 0; attempt < 180; attempt++) {
     await sleep(1000)
 
     const historyResponse = await fetch(`${baseUrl}/history/${promptData.prompt_id}`, {
