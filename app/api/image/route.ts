@@ -3,6 +3,8 @@ export const maxDuration = 60
 const DEFAULT_NEGATIVE_PROMPT =
   'low quality, blurry, distorted, deformed, bad anatomy, extra fingers, watermark, text'
 
+const DEFAULT_REPLICATE_MODEL = 'black-forest-labs/flux-schnell'
+
 type ComfyImage = {
   filename: string
   subfolder?: string
@@ -119,29 +121,98 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export async function POST(req: Request) {
-  const { prompt }: { prompt?: string } = await req.json()
+async function createReplicateImage(prompt: string, signal: AbortSignal) {
+  const token = process.env.REPLICATE_API_TOKEN
 
-  if (!prompt?.trim()) {
-    return new Response(JSON.stringify({ error: 'Prompt is required.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    })
+  if (!token) {
+    return null
   }
 
+  const model = process.env.REPLICATE_MODEL || DEFAULT_REPLICATE_MODEL
+  const [owner, name] = model.split('/')
+
+  if (!owner || !name) {
+    throw new Error('REPLICATE_MODEL must be in the format owner/model-name.')
+  }
+
+  const response = await fetch(
+    `https://api.replicate.com/v1/models/${owner}/${name}/predictions`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Prefer: 'wait',
+      },
+      body: JSON.stringify({
+        input: {
+          prompt,
+          aspect_ratio: process.env.REPLICATE_ASPECT_RATIO || '1:1',
+          output_format: process.env.REPLICATE_OUTPUT_FORMAT || 'png',
+          output_quality: Number(process.env.REPLICATE_OUTPUT_QUALITY || 100),
+          num_outputs: 1,
+        },
+      }),
+      signal,
+    }
+  )
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`Replicate error: ${error}`)
+  }
+
+  let prediction = (await response.json()) as {
+    id?: string
+    status?: string
+    output?: string[] | string
+    error?: string
+    urls?: { get?: string }
+  }
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (prediction.status === 'succeeded') {
+      const output = prediction.output
+      if (Array.isArray(output) && output[0]) return output[0]
+      if (typeof output === 'string') return output
+      break
+    }
+
+    if (prediction.status === 'failed' || prediction.status === 'canceled') {
+      throw new Error(prediction.error || 'Replicate image generation failed.')
+    }
+
+    if (!prediction.urls?.get) {
+      break
+    }
+
+    await sleep(1500)
+
+    const pollResponse = await fetch(prediction.urls.get, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      signal,
+      cache: 'no-store',
+    })
+
+    if (!pollResponse.ok) {
+      const error = await pollResponse.text()
+      throw new Error(`Replicate polling failed: ${error}`)
+    }
+
+    prediction = await pollResponse.json()
+  }
+
+  throw new Error('Replicate image generation timed out.')
+}
+
+async function createComfyUIImage(prompt: string, signal: AbortSignal) {
   const baseUrl = process.env.COMFYUI_BASE_URL?.replace(/\/$/, '')
 
   if (!baseUrl) {
-    return new Response(
-      JSON.stringify({
-        error:
-          'COMFYUI_BASE_URL is missing. Add your ComfyUI server URL to environment variables.',
-      }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    )
+    return null
   }
 
   let workflow: Record<string, unknown>
@@ -149,14 +220,8 @@ export async function POST(req: Request) {
   try {
     workflow = buildWorkflow(prompt.trim())
   } catch (error) {
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : 'Failed to build workflow.',
-      }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      }
+    throw new Error(
+      error instanceof Error ? error.message : 'Failed to build ComfyUI workflow.'
     )
   }
 
@@ -165,24 +230,18 @@ export async function POST(req: Request) {
     method: 'POST',
     headers: getComfyHeaders(),
     body: JSON.stringify({ prompt: workflow, client_id: clientId }),
-    signal: req.signal,
+    signal,
   })
 
   if (!promptResponse.ok) {
     const error = await promptResponse.text()
-    return new Response(JSON.stringify({ error }), {
-      status: promptResponse.status,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    throw new Error(error)
   }
 
   const promptData = (await promptResponse.json()) as { prompt_id?: string }
 
   if (!promptData.prompt_id) {
-    return new Response(JSON.stringify({ error: 'ComfyUI did not return a prompt_id.' }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    throw new Error('ComfyUI did not return a prompt_id.')
   }
 
   let image: ComfyImage | null = null
@@ -192,7 +251,7 @@ export async function POST(req: Request) {
 
     const historyResponse = await fetch(`${baseUrl}/history/${promptData.prompt_id}`, {
       headers: getComfyHeaders(),
-      signal: req.signal,
+      signal,
       cache: 'no-store',
     })
 
@@ -210,15 +269,7 @@ export async function POST(req: Request) {
   }
 
   if (!image) {
-    return new Response(
-      JSON.stringify({
-        error: 'Image generation timed out before ComfyUI returned an image.',
-      }),
-      {
-        status: 504,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    )
+    throw new Error('Image generation timed out before ComfyUI returned an image.')
   }
 
   const params = new URLSearchParams({
@@ -231,23 +282,60 @@ export async function POST(req: Request) {
     headers: process.env.COMFYUI_API_KEY
       ? { Authorization: `Bearer ${process.env.COMFYUI_API_KEY}` }
       : undefined,
-    signal: req.signal,
+    signal,
     cache: 'no-store',
   })
 
   if (!imageResponse.ok) {
     const error = await imageResponse.text()
-    return new Response(JSON.stringify({ error }), {
-      status: imageResponse.status,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    throw new Error(error)
   }
 
   const contentType = imageResponse.headers.get('content-type') || 'image/png'
   const buffer = Buffer.from(await imageResponse.arrayBuffer())
-  const imageDataUrl = `data:${contentType};base64,${buffer.toString('base64')}`
+  return `data:${contentType};base64,${buffer.toString('base64')}`
+}
 
-  return new Response(JSON.stringify({ imageDataUrl }), {
-    headers: { 'Content-Type': 'application/json' },
-  })
+export async function POST(req: Request) {
+  const { prompt }: { prompt?: string } = await req.json()
+
+  if (!prompt?.trim()) {
+    return new Response(JSON.stringify({ error: 'Prompt is required.' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  try {
+    const imageDataUrl =
+      (await createReplicateImage(prompt.trim(), req.signal)) ||
+      (await createComfyUIImage(prompt.trim(), req.signal))
+
+    if (!imageDataUrl) {
+      return new Response(
+        JSON.stringify({
+          error:
+            'No image backend is configured. Add REPLICATE_API_TOKEN for the easiest setup or COMFYUI_BASE_URL for self-hosted generation.',
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
+    return new Response(JSON.stringify({ imageDataUrl }), {
+      headers: { 'Content-Type': 'application/json' },
+    })
+  } catch (error) {
+    return new Response(
+      JSON.stringify({
+        error: error instanceof Error ? error.message : 'Image generation failed.',
+      }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
+  }
 }

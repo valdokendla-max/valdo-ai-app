@@ -37,6 +37,25 @@ npm start
 
 Rakendus toetab nüüd pildiloomet eraldi /api/image route kaudu. Selle jaoks lisa Vercelis või lokaalsesse .env.local faili järgmised muutujad:
 
+### Lihtsaim variant: Replicate
+
+Kui tahad kõige kiiremini tööle saada, lisa ainult need muutujad:
+
+```env
+REPLICATE_API_TOKEN=r8_voi_muu_sinu_token
+REPLICATE_MODEL=black-forest-labs/flux-schnell
+REPLICATE_ASPECT_RATIO=1:1
+REPLICATE_OUTPUT_FORMAT=png
+REPLICATE_OUTPUT_QUALITY=100
+```
+
+Märkused:
+- See on lihtsaim tee, sest oma GPU serverit pole vaja.
+- Vaikimisi kasutatakse Flux Schnell mudelit Replicate'i kaudu.
+- Kui REPLICATE_API_TOKEN on olemas, kasutab app kõigepealt Replicate'it.
+
+### Vabama kontrolliga variant: ComfyUI
+
 ```env
 COMFYUI_BASE_URL=http://sinu-comfyui-server:8188
 COMFYUI_CHECKPOINT_NAME=flux1-dev.safetensors
@@ -54,4 +73,5 @@ Märkused:
 - COMFYUI_BASE_URL peab olema serverist kättesaadav ComfyUI endpoint.
 - COMFYUI_CHECKPOINT_NAME peab täpselt vastama sinu ComfyUI-s olemasoleva mudelifaili nimele.
 - Kui ComfyUI kasutab autentimist, lisa COMFYUI_API_KEY.
+- Kui REPLICATE_API_TOKEN puudub, proovib app kasutada ComfyUI backendit.
 - UI-s saad pildireziimi sisse lülitada nupuga Loo pilt.
