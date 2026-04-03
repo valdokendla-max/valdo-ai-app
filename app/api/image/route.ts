@@ -1,7 +1,13 @@
+import { groq } from '@ai-sdk/groq'
+import { generateText } from 'ai'
+
 export const maxDuration = 300
 
 const DEFAULT_NEGATIVE_PROMPT =
   'low quality, blurry, distorted, deformed, bad anatomy, extra fingers, watermark, text'
+
+const DEFAULT_IMAGE_STYLE_PROMPT =
+  'best quality, highly detailed, cinematic lighting, sharp focus, realistic composition'
 
 const DEFAULT_REPLICATE_MODEL = 'black-forest-labs/flux-schnell'
 
@@ -127,6 +133,43 @@ function getFirstImage(historyEntry: any): ComfyImage | null {
 
 async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function buildFallbackImagePrompt(prompt: string) {
+  return `${prompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}`
+}
+
+async function optimizeImagePrompt(prompt: string, signal: AbortSignal) {
+  const cleanedPrompt = prompt.trim()
+
+  if (!cleanedPrompt) {
+    return cleanedPrompt
+  }
+
+  if (!process.env.GROQ_API_KEY) {
+    return buildFallbackImagePrompt(cleanedPrompt)
+  }
+
+  try {
+    const result = await generateText({
+      model: groq('llama-3.1-8b-instant'),
+      system:
+        'Rewrite the user image request into one concise English prompt for a Stable Diffusion style image model. Keep the original intent exactly. Add useful visual detail only when missing. Return only the final prompt, no quotes, no labels.',
+      prompt: cleanedPrompt,
+      abortSignal: signal,
+      temperature: 0.4,
+    })
+
+    const optimizedPrompt = result.text.trim()
+
+    if (!optimizedPrompt) {
+      return buildFallbackImagePrompt(cleanedPrompt)
+    }
+
+    return `${optimizedPrompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}`
+  } catch {
+    return buildFallbackImagePrompt(cleanedPrompt)
+  }
 }
 
 async function fetchComfyImageDataUrl(
@@ -444,10 +487,11 @@ export async function POST(req: Request) {
 
   try {
     const trimmedPrompt = prompt.trim()
+    const optimizedPrompt = await optimizeImagePrompt(trimmedPrompt, req.signal)
     const hasComfy = Boolean(process.env.COMFYUI_BASE_URL)
 
     if (hasComfy) {
-      const queuedJob = await queueComfyUIImage(trimmedPrompt, req.signal)
+      const queuedJob = await queueComfyUIImage(optimizedPrompt, req.signal)
 
       if (!queuedJob) {
         throw new Error('ComfyUI is not configured.')
@@ -469,14 +513,14 @@ export async function POST(req: Request) {
     let lastError: Error | null = null
 
     try {
-      imageDataUrl = await createReplicateImage(trimmedPrompt, req.signal)
+      imageDataUrl = await createReplicateImage(optimizedPrompt, req.signal)
     } catch (error) {
       lastError = error instanceof Error ? error : new Error('Replicate image generation failed.')
     }
 
     if (!imageDataUrl) {
       try {
-        imageDataUrl = await createComfyUIImage(trimmedPrompt, req.signal)
+        imageDataUrl = await createComfyUIImage(optimizedPrompt, req.signal)
       } catch (error) {
         lastError = error instanceof Error ? error : new Error('ComfyUI image generation failed.')
       }
