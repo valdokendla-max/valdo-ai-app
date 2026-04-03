@@ -307,14 +307,28 @@ export async function POST(req: Request) {
   }
 
   try {
-    const imageDataUrl =
-      (await createReplicateImage(prompt.trim(), req.signal)) ||
-      (await createComfyUIImage(prompt.trim(), req.signal))
+    let imageDataUrl: string | null = null
+    let lastError: Error | null = null
+
+    try {
+      imageDataUrl = await createReplicateImage(prompt.trim(), req.signal)
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Replicate image generation failed.')
+    }
+
+    if (!imageDataUrl) {
+      try {
+        imageDataUrl = await createComfyUIImage(prompt.trim(), req.signal)
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('ComfyUI image generation failed.')
+      }
+    }
 
     if (!imageDataUrl) {
       return new Response(
         JSON.stringify({
           error:
+            lastError?.message ||
             'No image backend is configured. Add REPLICATE_API_TOKEN for the easiest setup or COMFYUI_BASE_URL for self-hosted generation.',
         }),
         {
