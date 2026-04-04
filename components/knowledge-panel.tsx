@@ -23,6 +23,24 @@ interface KnowledgePanelProps {
   onClose: () => void
 }
 
+const PUBLIC_HOST = 'valdo-ai-webapp.vercel.app'
+const PROTECTED_HOSTS = new Set([
+  'valdo-ai-webapp-valdos-projects-48d5db42.vercel.app',
+  'valdo-ai-webapp-git-main-valdos-projects-48d5db42.vercel.app',
+])
+
+function resolveClientApiPath(path: string) {
+  if (typeof window === 'undefined') {
+    return path
+  }
+
+  if (!PROTECTED_HOSTS.has(window.location.host)) {
+    return path
+  }
+
+  return `https://${PUBLIC_HOST}${path}`
+}
+
 export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
   const [items, setItems] = useState<KnowledgeItem[]>([])
   const [isAdding, setIsAdding] = useState(false)
@@ -37,7 +55,7 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
 
   const fetchItems = async () => {
     try {
-      const res = await fetch('/api/knowledge')
+      const res = await fetch(resolveClientApiPath('/api/knowledge'))
       const data = await res.json()
       setItems(data)
     } catch {
@@ -49,7 +67,7 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
     if (isOpen && items.length === 0) {
       (async () => {
         try {
-          const res = await fetch('/api/knowledge');
+          const res = await fetch(resolveClientApiPath('/api/knowledge'));
           const data = await res.json();
           setItems(data);
         } catch {
@@ -63,7 +81,7 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
     if (!title.trim() || !content.trim()) return
     setIsLoading(true)
     try {
-      await fetch('/api/knowledge', {
+      await fetch(resolveClientApiPath('/api/knowledge'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title, content, category }),
@@ -80,7 +98,7 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
 
   const handleDelete = async (id: string) => {
     try {
-      await fetch(`/api/knowledge?id=${id}`, { method: 'DELETE' })
+      await fetch(`${resolveClientApiPath('/api/knowledge')}?id=${id}`, { method: 'DELETE' })
       await fetchItems()
     } catch {
       /* ignore */

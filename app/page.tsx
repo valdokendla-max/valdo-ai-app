@@ -52,6 +52,18 @@ const PROTECTED_HOSTS = new Set([
   'valdo-ai-webapp-git-main-valdos-projects-48d5db42.vercel.app',
 ])
 
+function resolveClientApiPath(path: string) {
+  if (typeof window === 'undefined') {
+    return path
+  }
+
+  if (!PROTECTED_HOSTS.has(window.location.host)) {
+    return path
+  }
+
+  return `https://${PUBLIC_HOST}${path}`
+}
+
 function createTextMessage(role: 'user' | 'assistant', text: string): UIMessage {
   return {
     id: crypto.randomUUID(),
@@ -115,6 +127,7 @@ export default function ValdoAI() {
   const [backendHealth, setBackendHealth] = useState<BackendHealthResponse | null>(null)
   const [activeImageProviderId, setActiveImageProviderId] = useState<ImageProviderId | null>(null)
   const [isRedirectingHost, setIsRedirectingHost] = useState(false)
+  const [apiBaseUrl, setApiBaseUrl] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -125,9 +138,11 @@ export default function ValdoAI() {
     const currentHost = window.location.host
 
     if (!PROTECTED_HOSTS.has(currentHost)) {
+      setApiBaseUrl('')
       return
     }
 
+    setApiBaseUrl(`https://${PUBLIC_HOST}`)
     setIsRedirectingHost(true)
 
     const redirectUrl = new URL(window.location.href)
@@ -142,7 +157,9 @@ export default function ValdoAI() {
 
     const loadHealth = async () => {
       try {
-        const response = await fetch('/api/backends/health', { cache: 'no-store' })
+        const response = await fetch(resolveClientApiPath('/api/backends/health'), {
+          cache: 'no-store',
+        })
         const data = (await response.json()) as BackendHealthResponse
 
         if (!cancelled) {
@@ -225,7 +242,7 @@ export default function ValdoAI() {
 
   const { messages, sendMessage, status, setMessages, error } = useChat({
     transport: new DefaultChatTransport({
-      api: '/api/chat',
+      api: `${apiBaseUrl}/api/chat`,
       prepareSendMessagesRequest: ({ id, messages, body, trigger, messageId }) => ({
         body: {
           ...body,
@@ -278,7 +295,7 @@ export default function ValdoAI() {
       setImageStage('enhancing')
       replaceMessageText(placeholderId, `Täiustan loodud pilti: **${prompt}**`)
 
-      const response = await fetch('/api/image', {
+      const response = await fetch(resolveClientApiPath('/api/image'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -320,7 +337,7 @@ export default function ValdoAI() {
 
       const params = new URLSearchParams({ promptId })
 
-      const response = await fetch(`/api/image?${params.toString()}`, {
+      const response = await fetch(`${resolveClientApiPath('/api/image')}?${params.toString()}`, {
         cache: 'no-store',
       })
 
@@ -374,7 +391,7 @@ export default function ValdoAI() {
     setMessages((current) => [...current, userMessage, placeholderMessage])
 
     try {
-      const response = await fetch('/api/image', {
+      const response = await fetch(resolveClientApiPath('/api/image'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
