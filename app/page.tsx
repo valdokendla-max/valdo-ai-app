@@ -1,9 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { useChat } from '@ai-sdk/react'
 import type { UIMessage } from 'ai'
-import { DefaultChatTransport } from 'ai'
 import { ChatHeader } from '@/components/chat-header'
 import { ChatMessage } from '@/components/chat-message'
 import { ChatInput } from '@/components/chat-input'
@@ -43,6 +41,11 @@ type BackendHealthResponse = {
   comfyui: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
   replicate: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
 }
+
+type ChatStreamEvent =
+  | { type: 'text-delta'; delta: string }
+  | { type: 'finish' }
+  | { type: string; [key: string]: unknown }
 
 const GENERATED_IMAGE_MARKDOWN_REGEX = /!\[[^\]]*\]\(data:image\/[^)]+\)/g
 const HUB_SETTINGS_STORAGE_KEY = 'valdo-ai-hub-settings'
@@ -107,11 +110,14 @@ function buildImageStatusText(prompt: string, status: Exclude<ImageJobStatus, 's
 }
 
 export default function ValdoAI() {
+  const [messages, setMessages] = useState<UIMessage[]>([])
   const [input, setInput] = useState('')
   const [knowledgeOpen, setKnowledgeOpen] = useState(false)
   const [isImageMode, setIsImageMode] = useState(false)
+  const [chatError, setChatError] = useState<string | undefined>()
   const [imageError, setImageError] = useState<string | undefined>()
   const [isImageLoading, setIsImageLoading] = useState(false)
+  const [isTextLoading, setIsTextLoading] = useState(false)
   const [textModelId, setTextModelId] = useState<TextModelId>(DEFAULT_TEXT_MODEL_ID)
   const [promptProfileId, setPromptProfileId] = useState<PromptProfileId>(
     DEFAULT_PROMPT_PROFILE_ID
@@ -240,26 +246,9 @@ export default function ValdoAI() {
     textModelId,
   ])
 
-  const { messages, sendMessage, status, setMessages, error } = useChat({
-    transport: new DefaultChatTransport({
-      api: `${apiBaseUrl}/api/chat`,
-      prepareSendMessagesRequest: ({ id, messages, body, trigger, messageId }) => ({
-        body: {
-          ...body,
-          id,
-          messages: sanitizeMessagesForChatModel(messages),
-          modelId: textModelId,
-          promptProfileId,
-          trigger,
-          messageId,
-        },
-      }),
-    }),
-  })
-
-  const isLoading = status === 'streaming' || status === 'submitted'
+  const isLoading = isTextLoading
   const isBusy = isLoading || isImageLoading
-  const displayError = imageError || error?.message
+  const displayError = imageError || chatError
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -268,10 +257,123 @@ export default function ValdoAI() {
   }, [messages, isImageLoading])
 
   const handleTextSubmit = () => {
-    if (!input.trim() || isBusy) return
+    void submitTextPrompt(input)
+  }
+
+  const appendMessageText = (messageId: string, chunk: string) => {
+    setMessages((current) =>
+      current.map((message) => {
+        if (message.id !== messageId) {
+          return message
+        }
+
+        const currentText = message.parts
+          ?.filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+          .map((part) => part.text)
+          .join('') || ''
+
+        return {
+          ...message,
+          parts: [{ type: 'text', text: `${currentText}${chunk}` }],
+        }
+      })
+    )
+  }
+
+  const consumeChatStream = async (response: Response, assistantMessageId: string) => {
+    const reader = response.body?.getReader()
+
+    if (!reader) {
+      throw new Error('Chat stream puudub.')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let sawTextDelta = false
+
+    while (true) {
+      const { done, value } = await reader.read()
+
+      if (done) {
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+
+      while (true) {
+        const eventBoundary = buffer.indexOf('\n\n')
+
+        if (eventBoundary === -1) {
+          break
+        }
+
+        const rawEvent = buffer.slice(0, eventBoundary)
+        buffer = buffer.slice(eventBoundary + 2)
+
+        const dataPayload = rawEvent
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trimStart())
+          .join('\n')
+
+        if (!dataPayload || dataPayload === '[DONE]') {
+          continue
+        }
+
+        const event = JSON.parse(dataPayload) as ChatStreamEvent
+
+        if (event.type === 'text-delta' && typeof event.delta === 'string') {
+          sawTextDelta = true
+          appendMessageText(assistantMessageId, event.delta)
+        }
+      }
+    }
+
+    if (!sawTextDelta) {
+      replaceMessageText(assistantMessageId, 'Vastus saabus tühjana. Proovi uuesti.')
+    }
+  }
+
+  const submitTextPrompt = async (rawInput: string) => {
+    const prompt = rawInput.trim()
+
+    if (!prompt || isBusy) {
+      return
+    }
+
+    const userMessage = createTextMessage('user', prompt)
+    const assistantPlaceholder = createTextMessage('assistant', '')
+
+    setChatError(undefined)
     setImageError(undefined)
-    sendMessage({ text: input })
+    setIsTextLoading(true)
     setInput('')
+    setMessages((current) => [...current, userMessage, assistantPlaceholder])
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: sanitizeMessagesForChatModel([...messages, userMessage]),
+          modelId: textModelId,
+          promptProfileId,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText || 'Tekstivastus ebaõnnestus.')
+      }
+
+      await consumeChatStream(response, assistantPlaceholder.id)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Tekstivastus ebaõnnestus.'
+      setChatError(message)
+      replaceMessageText(assistantPlaceholder.id, `Vastamine ebaõnnestus: ${message}`)
+    } finally {
+      setIsTextLoading(false)
+    }
   }
 
   const replaceMessageText = (messageId: string, text: string) => {
@@ -467,14 +569,17 @@ export default function ValdoAI() {
       return
     }
 
+    setChatError(undefined)
     setImageError(undefined)
-    sendMessage({ text })
+    void submitTextPrompt(text)
   }
 
   const handleReset = () => {
     setMessages([])
+    setChatError(undefined)
     setImageError(undefined)
     setIsImageLoading(false)
+    setIsTextLoading(false)
     setImageStage('idle')
     setActiveImageProviderId(null)
   }
