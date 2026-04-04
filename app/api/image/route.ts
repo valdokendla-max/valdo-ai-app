@@ -2,6 +2,13 @@ import { groq } from '@ai-sdk/groq'
 import { generateText } from 'ai'
 import sharp from 'sharp'
 import { getImagePipeline, getImageProvider } from '@/lib/ai-hub'
+import {
+  isBackendCoolingDown,
+  recordBackendFailure,
+  recordBackendSuccess,
+  sortProvidersForAuto,
+  type RuntimeImageProviderId,
+} from '@/lib/image-backend-runtime'
 
 export const maxDuration = 300
 
@@ -29,8 +36,6 @@ type ImageStatusResponse = {
   imageDataUrl?: string
   error?: string
 }
-
-type RuntimeImageProviderId = 'automatic1111' | 'comfyui' | 'replicate'
 
 function parseDataUrl(input: string) {
   const match = input.match(/^data:([^;]+);base64,(.+)$/)
@@ -774,7 +779,7 @@ export async function POST(req: Request) {
     let resolvedProviderId: RuntimeImageProviderId | null = null
     const providerOrder: RuntimeImageProviderId[] =
       selectedProvider.id === 'auto'
-        ? ['automatic1111', 'comfyui', 'replicate']
+        ? sortProvidersForAuto(['automatic1111', 'comfyui', 'replicate'])
         : [selectedProvider.id as RuntimeImageProviderId]
 
     for (const candidateProvider of providerOrder) {
@@ -787,6 +792,10 @@ export async function POST(req: Request) {
         continue
       }
 
+      if (selectedProvider.id === 'auto' && isBackendCoolingDown(candidateProvider)) {
+        continue
+      }
+
       try {
         if (candidateProvider === 'automatic1111') {
           imageDataUrl = await createAutomatic1111Image(
@@ -794,6 +803,7 @@ export async function POST(req: Request) {
             createBackendSignal(req.signal, 90000),
             selectedPipeline
           )
+          recordBackendSuccess('automatic1111')
           resolvedProviderId = 'automatic1111'
           break
         }
@@ -808,6 +818,8 @@ export async function POST(req: Request) {
           if (!queuedJob) {
             throw new Error('ComfyUI is not configured.')
           }
+
+          recordBackendSuccess('comfyui')
 
           return new Response(
             JSON.stringify({
@@ -828,6 +840,7 @@ export async function POST(req: Request) {
           createBackendSignal(req.signal, 90000),
           selectedPipeline
         )
+        recordBackendSuccess('replicate')
         resolvedProviderId = 'replicate'
         break
       } catch (error) {
@@ -835,6 +848,7 @@ export async function POST(req: Request) {
           error instanceof Error
             ? error
             : new Error(`${candidateProvider} image generation failed.`)
+        recordBackendFailure(candidateProvider, lastError.message)
       }
     }
 

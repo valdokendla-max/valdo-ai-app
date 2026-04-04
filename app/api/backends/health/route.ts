@@ -1,8 +1,23 @@
+import {
+  getBackendRuntimeSnapshot,
+  type RuntimeImageProviderId,
+} from '@/lib/image-backend-runtime'
+
 type BackendHealthState = 'connected' | 'configured' | 'missing' | 'error'
 
 type BackendHealthEntry = {
   status: BackendHealthState
   detail: string
+}
+
+function withRuntimeDetail(providerId: RuntimeImageProviderId, detail: string) {
+  const runtime = getBackendRuntimeSnapshot(providerId)
+  const scoreText = `score ${runtime.score}`
+  const cooldownText = runtime.coolingDown
+    ? `, cooldown ${Math.ceil(runtime.cooldownRemainingMs / 1000)}s`
+    : ''
+
+  return `${detail} · ${scoreText}${cooldownText}`
 }
 
 function toDisplayHost(value: string) {
@@ -75,12 +90,12 @@ async function checkComfyUI(): Promise<BackendHealthEntry> {
 
     return {
       status: 'connected',
-      detail: `${host}: uhendus olemas`,
+      detail: withRuntimeDetail('automatic1111', `${host}: uhendus olemas`),
     }
   } catch (error) {
     return {
       status: 'error',
-      detail: `${host}: ${getErrorDetail(error)}`,
+      detail: withRuntimeDetail('automatic1111', `${host}: ${getErrorDetail(error)}`),
     }
   }
 }
@@ -111,12 +126,12 @@ async function checkAutomatic1111(): Promise<BackendHealthEntry> {
 
     return {
       status: 'connected',
-      detail: `${host}: uhendus olemas`,
+      detail: withRuntimeDetail('comfyui', `${host}: uhendus olemas`),
     }
   } catch (error) {
     return {
       status: 'error',
-      detail: `${host}: ${getErrorDetail(error)}`,
+      detail: withRuntimeDetail('comfyui', `${host}: ${getErrorDetail(error)}`),
     }
   }
 }
@@ -133,7 +148,7 @@ function checkReplicate(): BackendHealthEntry {
 
   return {
     status: 'configured',
-    detail: `Token olemas, mudel ${model}`,
+    detail: withRuntimeDetail('replicate', `Token olemas, mudel ${model}`),
   }
 }
 
