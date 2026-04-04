@@ -46,6 +46,11 @@ type BackendHealthResponse = {
 
 const GENERATED_IMAGE_MARKDOWN_REGEX = /!\[[^\]]*\]\(data:image\/[^)]+\)/g
 const HUB_SETTINGS_STORAGE_KEY = 'valdo-ai-hub-settings'
+const PUBLIC_HOST = 'valdo-ai-webapp.vercel.app'
+const PROTECTED_HOSTS = new Set([
+  'valdo-ai-webapp-valdos-projects-48d5db42.vercel.app',
+  'valdo-ai-webapp-git-main-valdos-projects-48d5db42.vercel.app',
+])
 
 function createTextMessage(role: 'user' | 'assistant', text: string): UIMessage {
   return {
@@ -109,7 +114,28 @@ export default function ValdoAI() {
   const [imageStage, setImageStage] = useState<DisplayImageStage>('idle')
   const [backendHealth, setBackendHealth] = useState<BackendHealthResponse | null>(null)
   const [activeImageProviderId, setActiveImageProviderId] = useState<ImageProviderId | null>(null)
+  const [isRedirectingHost, setIsRedirectingHost] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const currentHost = window.location.host
+
+    if (!PROTECTED_HOSTS.has(currentHost)) {
+      return
+    }
+
+    setIsRedirectingHost(true)
+
+    const redirectUrl = new URL(window.location.href)
+    redirectUrl.host = PUBLIC_HOST
+    redirectUrl.protocol = 'https:'
+
+    window.location.replace(redirectUrl.toString())
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -434,6 +460,16 @@ export default function ValdoAI() {
     setIsImageLoading(false)
     setImageStage('idle')
     setActiveImageProviderId(null)
+  }
+
+  if (isRedirectingHost) {
+    return (
+      <div className="flex h-dvh items-center justify-center bg-background px-6 text-center">
+        <div className="rounded-2xl border border-border/60 bg-card/30 px-6 py-5 text-sm text-muted-foreground">
+          Suunan sind avalikule domeenile, et vestlus töötaks samas lehes korrektselt...
+        </div>
+      </div>
+    )
   }
 
   return (
