@@ -35,7 +35,7 @@ interface HubControlsProps {
 }
 
 const baseSelectClassName =
-  'w-full rounded-xl border border-border bg-card/80 px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30'
+  'w-full rounded-lg border border-border/70 bg-card/70 px-2.5 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30'
 
 export function HubControls({
   isImageMode,
@@ -92,11 +92,11 @@ export function HubControls({
       PROMPT_PROFILES.find((profile) => profile.id === DEFAULT_PROMPT_PROFILE_ID)?.description
 
   return (
-    <div className="grid gap-2 rounded-2xl border border-border/70 bg-card/40 p-3 sm:grid-cols-2">
+    <div className="grid gap-1.5 rounded-xl border border-border/60 bg-card/30 p-2.5 sm:grid-cols-2">
       {isImageMode ? (
         <>
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
               Pildi backend
             </span>
             <select
@@ -113,7 +113,7 @@ export function HubControls({
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
               Pipeline
             </span>
             <select
@@ -132,14 +132,14 @@ export function HubControls({
           <button
             type="button"
             onClick={() => onEnhancePromptChange(!enhancePrompt)}
-            className={`sm:col-span-2 rounded-xl border px-3 py-2 text-left text-sm transition-colors ${
+            className={`sm:col-span-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
               enhancePrompt
                 ? 'border-primary/40 bg-primary/10 text-foreground'
                 : 'border-border bg-card/70 text-muted-foreground'
             }`}
           >
             <span className="block font-medium">3-sammuline töötlus</span>
-            <span className="block text-xs opacity-80">
+            <span className="block text-[11px] opacity-80">
               {enhancePrompt
                 ? 'Prompt täpsustatakse, pilt genereeritakse ja lõpus tehakse upscale.'
                 : 'Kasutatakse ühte otsegeneratsiooni sammu ilma täiendava töötluseta.'}
@@ -149,7 +149,7 @@ export function HubControls({
       ) : (
         <>
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
               Tekstimudel
             </span>
             <select
@@ -166,7 +166,7 @@ export function HubControls({
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
               Prompti profiil
             </span>
             <select
@@ -184,7 +184,7 @@ export function HubControls({
         </>
       )}
 
-      <div className="sm:col-span-2 rounded-xl bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+      <div className="sm:col-span-2 rounded-lg bg-background/50 px-3 py-1.5 text-[11px] text-muted-foreground">
         {primaryDescription} {' · '} {secondaryDescription}
       </div>
     </div>

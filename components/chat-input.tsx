@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, ImagePlus, Loader2, MessageSquare } from 'lucide-react'
 import { HubControls } from '@/components/hub-controls'
 import type {
@@ -8,6 +8,12 @@ import type {
   ImageProviderId,
   PromptProfileId,
   TextModelId,
+} from '@/lib/ai-hub'
+import {
+  IMAGE_PIPELINES,
+  IMAGE_PROVIDERS,
+  PROMPT_PROFILES,
+  TEXT_MODELS,
 } from '@/lib/ai-hub'
 import { cn } from '@/lib/utils'
 
@@ -57,8 +63,26 @@ export function ChatInput({
   onEnhancePromptChange,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [controlsOpen, setControlsOpen] = useState(false)
   const textareaId = isImageMode ? 'image-prompt-input' : 'chat-message-input'
   const helperTextId = isImageMode ? 'image-prompt-help' : 'chat-message-help'
+
+  const controlsSummary = useMemo(() => {
+    if (isImageMode) {
+      const providerLabel =
+        IMAGE_PROVIDERS.find((provider) => provider.id === imageProviderId)?.label || imageProviderId
+      const pipelineLabel =
+        IMAGE_PIPELINES.find((pipeline) => pipeline.id === imagePipelineId)?.label || imagePipelineId
+
+      return `${providerLabel} · ${pipelineLabel} · ${enhancePrompt ? '3 sammu' : '1 samm'}`
+    }
+
+    const modelLabel = TEXT_MODELS.find((model) => model.id === textModelId)?.label || textModelId
+    const profileLabel =
+      PROMPT_PROFILES.find((profile) => profile.id === promptProfileId)?.label || promptProfileId
+
+    return `${modelLabel} · ${profileLabel}`
+  }, [enhancePrompt, imagePipelineId, imageProviderId, isImageMode, promptProfileId, textModelId])
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -93,21 +117,39 @@ export function ChatInput({
             {isImageMode ? 'Saadan kirjelduse valitud pilditöövoole' : 'Saadan prompti valitud tekstimudelile'}
           </p>
         </div>
-        <div className="mb-3">
-          <HubControls
-            isImageMode={isImageMode}
-            textModelId={textModelId}
-            promptProfileId={promptProfileId}
-            imageProviderId={imageProviderId}
-            imagePipelineId={imagePipelineId}
-            enhancePrompt={enhancePrompt}
-            backendHealth={backendHealth}
-            onTextModelChange={onTextModelChange}
-            onPromptProfileChange={onPromptProfileChange}
-            onImageProviderChange={onImageProviderChange}
-            onImagePipelineChange={onImagePipelineChange}
-            onEnhancePromptChange={onEnhancePromptChange}
-          />
+        <div className="mb-2 rounded-xl border border-border/60 bg-card/20 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setControlsOpen((current) => !current)}
+            className="flex w-full items-center justify-between gap-3 text-left"
+          >
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Seaded</p>
+              <p className="mt-0.5 text-xs text-foreground">{controlsSummary}</p>
+            </div>
+            <span className="text-[11px] text-muted-foreground">
+              {controlsOpen ? 'Peida' : 'Muuda'}
+            </span>
+          </button>
+
+          {controlsOpen ? (
+            <div className="mt-2">
+              <HubControls
+                isImageMode={isImageMode}
+                textModelId={textModelId}
+                promptProfileId={promptProfileId}
+                imageProviderId={imageProviderId}
+                imagePipelineId={imagePipelineId}
+                enhancePrompt={enhancePrompt}
+                backendHealth={backendHealth}
+                onTextModelChange={onTextModelChange}
+                onPromptProfileChange={onPromptProfileChange}
+                onImageProviderChange={onImageProviderChange}
+                onImagePipelineChange={onImagePipelineChange}
+                onEnhancePromptChange={onEnhancePromptChange}
+              />
+            </div>
+          ) : null}
         </div>
         <div className="flex items-end gap-2 rounded-2xl border border-border bg-card p-2 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
           <textarea

@@ -2,7 +2,6 @@
 
 import {
   IMAGE_PIPELINES,
-  IMAGE_PROVIDERS,
   PROMPT_PROFILES,
   TEXT_MODELS,
   type ImagePipelineId,
@@ -32,9 +31,9 @@ function isVisibleHealthStatus(status: 'connected' | 'configured' | 'missing' | 
 
 function StatusChip({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-border/70 bg-card/60 px-3 py-2">
-      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
-      <div className="mt-1 text-sm font-medium text-foreground">{value}</div>
+    <div className="min-w-26 rounded-lg border border-border/60 bg-card/50 px-2.5 py-1.5">
+      <div className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
+      <div className="mt-0.5 text-xs font-medium text-foreground">{value}</div>
     </div>
   )
 }
@@ -78,9 +77,21 @@ export function HubStatusBar({
     error: 'Viga',
   } as const
 
+  const visibleHealthEntries = backendHealth
+    ? [
+        { label: 'Automatic1111', entry: backendHealth.automatic1111 },
+        { label: 'ComfyUI', entry: backendHealth.comfyui },
+        { label: 'Replicate', entry: backendHealth.replicate },
+      ].filter(({ entry }) => isVisibleHealthStatus(entry.status))
+    : []
+
+  const showHealthSection = visibleHealthEntries.some(
+    ({ entry }) => entry.status === 'error'
+  )
+
   return (
-    <div className="border-b border-border/70 bg-background/70 px-4 py-3 backdrop-blur-sm">
-      <div className="mx-auto grid max-w-3xl gap-2 sm:grid-cols-4">
+    <div className="border-b border-border/60 bg-background/60 px-4 py-2 backdrop-blur-sm">
+      <div className="mx-auto flex max-w-3xl flex-wrap gap-1.5">
         <StatusChip label="Reziim" value={isImageMode ? 'Pilt' : 'Tekst'} />
         {isImageMode ? (
           <>
@@ -96,22 +107,16 @@ export function HubStatusBar({
           </>
         )}
       </div>
-      {backendHealth ? (
-        <div className="mx-auto mt-2 flex max-w-3xl flex-wrap gap-2">
-          {[
-            { label: 'Automatic1111', entry: backendHealth.automatic1111 },
-            { label: 'ComfyUI', entry: backendHealth.comfyui },
-            { label: 'Replicate', entry: backendHealth.replicate },
-          ]
-            .filter(({ entry }) => isVisibleHealthStatus(entry.status))
-            .map(({ label, entry }) => (
+      {showHealthSection ? (
+        <div className="mx-auto mt-1 flex max-w-3xl flex-wrap gap-1.5">
+          {visibleHealthEntries.map(({ label, entry }) => (
             <div
               key={label}
-              className={`rounded-full border px-3 py-1 text-xs ${healthTone[entry.status]}`}
+              className={`rounded-full border px-2.5 py-1 text-[11px] ${healthTone[entry.status]}`}
             >
               {label}: {healthLabel[entry.status]} · {entry.detail}
             </div>
-            ))}
+          ))}
         </div>
       ) : null}
     </div>
