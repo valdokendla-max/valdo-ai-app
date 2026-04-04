@@ -7,10 +7,22 @@ import { DefaultChatTransport } from 'ai'
 import { ChatHeader } from '@/components/chat-header'
 import { ChatMessage } from '@/components/chat-message'
 import { ChatInput } from '@/components/chat-input'
+import { HubStatusBar } from '@/components/hub-status-bar'
 import { ChatWelcome } from '@/components/chat-welcome'
 import { KnowledgePanel } from '@/components/knowledge-panel'
+import {
+  DEFAULT_IMAGE_PIPELINE_ID,
+  DEFAULT_IMAGE_PROVIDER_ID,
+  DEFAULT_PROMPT_PROFILE_ID,
+  DEFAULT_TEXT_MODEL_ID,
+  type ImagePipelineId,
+  type ImageProviderId,
+  type PromptProfileId,
+  type TextModelId,
+} from '@/lib/ai-hub'
 
 type ImageJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found'
+type DisplayImageStage = 'idle' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
 
 type ImageStatusResponse = {
   status: ImageJobStatus
@@ -18,7 +30,13 @@ type ImageStatusResponse = {
   error?: string
 }
 
+type BackendHealthResponse = {
+  comfyui: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
+  replicate: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
+}
+
 const GENERATED_IMAGE_MARKDOWN_REGEX = /!\[[^\]]*\]\(data:image\/[^)]+\)/g
+const HUB_SETTINGS_STORAGE_KEY = 'valdo-ai-hub-settings'
 
 function createTextMessage(role: 'user' | 'assistant', text: string): UIMessage {
   return {
@@ -68,7 +86,106 @@ export default function ValdoAI() {
   const [isImageMode, setIsImageMode] = useState(false)
   const [imageError, setImageError] = useState<string | undefined>()
   const [isImageLoading, setIsImageLoading] = useState(false)
+  const [textModelId, setTextModelId] = useState<TextModelId>(DEFAULT_TEXT_MODEL_ID)
+  const [promptProfileId, setPromptProfileId] = useState<PromptProfileId>(
+    DEFAULT_PROMPT_PROFILE_ID
+  )
+  const [imageProviderId, setImageProviderId] = useState<ImageProviderId>(
+    DEFAULT_IMAGE_PROVIDER_ID
+  )
+  const [imagePipelineId, setImagePipelineId] = useState<ImagePipelineId>(
+    DEFAULT_IMAGE_PIPELINE_ID
+  )
+  const [enhancePrompt, setEnhancePrompt] = useState(true)
+  const [imageStage, setImageStage] = useState<DisplayImageStage>('idle')
+  const [backendHealth, setBackendHealth] = useState<BackendHealthResponse | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadHealth = async () => {
+      try {
+        const response = await fetch('/api/backends/health', { cache: 'no-store' })
+        const data = (await response.json()) as BackendHealthResponse
+
+        if (!cancelled) {
+          setBackendHealth(data)
+        }
+      } catch {
+        if (!cancelled) {
+          setBackendHealth(null)
+        }
+      }
+    }
+
+    void loadHealth()
+    const timer = window.setInterval(() => {
+      void loadHealth()
+    }, 15000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const stored = window.localStorage.getItem(HUB_SETTINGS_STORAGE_KEY)
+
+    if (!stored) {
+      return
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as {
+        textModelId?: TextModelId
+        promptProfileId?: PromptProfileId
+        imageProviderId?: ImageProviderId
+        imagePipelineId?: ImagePipelineId
+        enhancePrompt?: boolean
+        isImageMode?: boolean
+      }
+
+      if (parsed.textModelId) setTextModelId(parsed.textModelId)
+      if (parsed.promptProfileId) setPromptProfileId(parsed.promptProfileId)
+      if (parsed.imageProviderId) setImageProviderId(parsed.imageProviderId)
+      if (parsed.imagePipelineId) setImagePipelineId(parsed.imagePipelineId)
+      if (typeof parsed.enhancePrompt === 'boolean') setEnhancePrompt(parsed.enhancePrompt)
+      if (typeof parsed.isImageMode === 'boolean') setIsImageMode(parsed.isImageMode)
+    } catch {
+      window.localStorage.removeItem(HUB_SETTINGS_STORAGE_KEY)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem(
+      HUB_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        textModelId,
+        promptProfileId,
+        imageProviderId,
+        imagePipelineId,
+        enhancePrompt,
+        isImageMode,
+      })
+    )
+  }, [
+    enhancePrompt,
+    imagePipelineId,
+    imageProviderId,
+    isImageMode,
+    promptProfileId,
+    textModelId,
+  ])
 
   const { messages, sendMessage, status, setMessages, error } = useChat({
     transport: new DefaultChatTransport({
@@ -78,6 +195,8 @@ export default function ValdoAI() {
           ...body,
           id,
           messages: sanitizeMessagesForChatModel(messages),
+          modelId: textModelId,
+          promptProfileId,
           trigger,
           messageId,
         },
@@ -110,11 +229,62 @@ export default function ValdoAI() {
     )
   }
 
-  const pollImageJob = async (promptId: string, placeholderId: string, prompt: string) => {
+  const finalizeImageResult = async (
+    prompt: string,
+    placeholderId: string,
+    imageDataUrl: string,
+    shouldUpscale: boolean,
+    pipelineId: ImagePipelineId
+  ) => {
+    let finalImageDataUrl = imageDataUrl
+
+    if (shouldUpscale) {
+      setImageStage('enhancing')
+      replaceMessageText(placeholderId, `Täiustan loodud pilti: **${prompt}**`)
+
+      const response = await fetch('/api/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'upscale',
+          imageDataUrl,
+          pipelineId,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok || !data.imageDataUrl) {
+        throw new Error(data.error || 'Pildi täiustamine ebaõnnestus.')
+      }
+
+      finalImageDataUrl = data.imageDataUrl
+    }
+
+    const assistantMessage = createTextMessage(
+      'assistant',
+      `Loodud pilt promptist: **${prompt}**\n\n![Loodud pilt](${finalImageDataUrl})`
+    )
+
+    setMessages((current) =>
+      current.map((message) => (message.id === placeholderId ? assistantMessage : message))
+    )
+    setImageStage('done')
+  }
+
+  const pollImageJob = async (
+    promptId: string,
+    placeholderId: string,
+    prompt: string,
+    shouldUpscale: boolean,
+    pipelineId: ImagePipelineId
+  ) => {
     for (let attempt = 0; attempt < 90; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 4000))
 
-      const response = await fetch(`/api/image?promptId=${encodeURIComponent(promptId)}`, {
+      const params = new URLSearchParams({ promptId })
+
+      const response = await fetch(`/api/image?${params.toString()}`, {
         cache: 'no-store',
       })
 
@@ -125,20 +295,12 @@ export default function ValdoAI() {
       }
 
       if (data.status === 'succeeded' && data.imageDataUrl) {
-        const assistantMessage = createTextMessage(
-          'assistant',
-          `Loodud pilt promptist: **${prompt}**\n\n![Loodud pilt](${data.imageDataUrl})`
-        )
-
-        setMessages((current) =>
-          current.map((message) =>
-            message.id === placeholderId ? assistantMessage : message
-          )
-        )
+        await finalizeImageResult(prompt, placeholderId, data.imageDataUrl, shouldUpscale, pipelineId)
         return
       }
 
       if (data.status === 'failed') {
+        setImageStage('failed')
         throw new Error(data.error || 'Pildi loomine ebaõnnestus.')
       }
 
@@ -147,6 +309,7 @@ export default function ValdoAI() {
       }
 
       if (data.status === 'queued' || data.status === 'running' || data.status === 'not_found') {
+        setImageStage(data.status === 'not_found' ? 'failed' : data.status)
         replaceMessageText(placeholderId, buildImageStatusText(prompt, data.status))
       }
     }
@@ -156,6 +319,8 @@ export default function ValdoAI() {
 
   const handleImageSubmit = async () => {
     const prompt = input.trim()
+    const activePipelineId = imagePipelineId
+    const activeEnhancePrompt = enhancePrompt
 
     if (!prompt || isBusy) return
 
@@ -167,6 +332,7 @@ export default function ValdoAI() {
 
     setImageError(undefined)
     setIsImageLoading(true)
+    setImageStage('queued')
     setInput('')
     setMessages((current) => [...current, userMessage, placeholderMessage])
 
@@ -174,7 +340,12 @@ export default function ValdoAI() {
       const response = await fetch('/api/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          prompt,
+          providerId: imageProviderId,
+          pipelineId: activePipelineId,
+          enhancePrompt: activeEnhancePrompt,
+        }),
       })
 
       const data = await response.json()
@@ -184,15 +355,12 @@ export default function ValdoAI() {
       }
 
       if (data.imageDataUrl) {
-        const assistantMessage = createTextMessage(
-          'assistant',
-          `Loodud pilt promptist: **${prompt}**\n\n![Loodud pilt](${data.imageDataUrl})`
-        )
-
-        setMessages((current) =>
-          current.map((message) =>
-            message.id === placeholderMessage.id ? assistantMessage : message
-          )
+        await finalizeImageResult(
+          prompt,
+          placeholderMessage.id,
+          data.imageDataUrl,
+          Boolean(data.shouldUpscale ?? activeEnhancePrompt),
+          activePipelineId
         )
         return
       }
@@ -201,10 +369,17 @@ export default function ValdoAI() {
         throw new Error('Pilditöö ei tagastanud töö ID-d.')
       }
 
-      await pollImageJob(data.promptId, placeholderMessage.id, prompt)
+      await pollImageJob(
+        data.promptId,
+        placeholderMessage.id,
+        prompt,
+        Boolean(data.shouldUpscale ?? activeEnhancePrompt),
+        activePipelineId
+      )
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Pildi loomine ebaõnnestus.'
-      setImageError(message)
+      setImageStage('failed')
+      setImageError(undefined)
       setMessages((current) =>
         current.map((entry) =>
           entry.id === placeholderMessage.id
@@ -241,11 +416,22 @@ export default function ValdoAI() {
     setMessages([])
     setImageError(undefined)
     setIsImageLoading(false)
+    setImageStage('idle')
   }
 
   return (
     <div className="flex h-dvh flex-col bg-background">
       <ChatHeader hasMessages={messages.length > 0} onReset={handleReset} onOpenKnowledge={() => setKnowledgeOpen(true)} />
+      <HubStatusBar
+        isImageMode={isImageMode}
+        textModelId={textModelId}
+        promptProfileId={promptProfileId}
+        imageProviderId={imageProviderId}
+        imagePipelineId={imagePipelineId}
+        enhancePrompt={enhancePrompt}
+        imageStage={imageStage}
+        backendHealth={backendHealth}
+      />
       <KnowledgePanel isOpen={knowledgeOpen} onClose={() => setKnowledgeOpen(false)} />
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -285,6 +471,16 @@ export default function ValdoAI() {
         isLoading={isBusy}
         error={displayError}
         isImageMode={isImageMode}
+        textModelId={textModelId}
+        promptProfileId={promptProfileId}
+        imageProviderId={imageProviderId}
+        imagePipelineId={imagePipelineId}
+        enhancePrompt={enhancePrompt}
+        onTextModelChange={setTextModelId}
+        onPromptProfileChange={setPromptProfileId}
+        onImageProviderChange={setImageProviderId}
+        onImagePipelineChange={setImagePipelineId}
+        onEnhancePromptChange={setEnhancePrompt}
         onToggleImageMode={() => {
           setImageError(undefined)
           setIsImageMode((current) => !current)

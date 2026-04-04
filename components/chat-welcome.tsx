@@ -20,10 +20,10 @@ export function ChatWelcome({ onSuggestionClick }: ChatWelcomeProps) {
         <Bot className="h-8 w-8" />
       </div>
       <h1 className="text-2xl font-semibold text-foreground mb-2 text-balance text-center">
-        Tere tulemast, Valdo AI
+        Tere tulemast, Valdo AI Hub
       </h1>
       <p className="text-muted-foreground text-sm mb-8 max-w-md text-center text-pretty">
-        Sinu privaatne ja piiranguteta AI assistent. Kuidas saan sind aidata?
+        Sinu privaatne tekstide, piltide ja prompt pipeline'ide töölaud. Kuidas saan sind aidata?
       </p>
 
       <div className="flex items-center gap-6 mb-8 text-xs text-muted-foreground">
@@ -33,7 +33,31 @@ export function ChatWelcome({ onSuggestionClick }: ChatWelcomeProps) {
         </div>
         <div className="flex items-center gap-1.5">
           <Zap className="h-3.5 w-3.5 text-primary" />
-          <span>Piiranguteta</span>
+          <span>Mitme reziimiga</span>
+        </div>
+      </div>
+
+      <div className="mb-8 grid w-full max-w-3xl gap-3 sm:grid-cols-3">
+        <div className="rounded-2xl border border-border bg-card/80 p-4 text-left">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Tekst</p>
+          <h2 className="mt-2 text-sm font-semibold text-foreground">Mudeli valik</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Llama 3.3 70B ja Llama 3.1 8B koos prompti profiilidega.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-border bg-card/80 p-4 text-left">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Pilt</p>
+          <h2 className="mt-2 text-sm font-semibold text-foreground">Backendid</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            ComfyUI ja Replicate on AI hubis olemas.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-border bg-card/80 p-4 text-left">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Enhance</p>
+          <h2 className="mt-2 text-sm font-semibold text-foreground">3 sammu</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Prompti täpsustus, genereerimine ja serveripoolne upscale.
+          </p>
         </div>
       </div>
 

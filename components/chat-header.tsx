@@ -16,8 +16,8 @@ export function ChatHeader({ hasMessages, onReset, onOpenKnowledge }: ChatHeader
           <Bot className="h-4 w-4" />
         </div>
         <div>
-          <h1 className="text-sm font-semibold text-foreground leading-none">Valdo AI</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">Privaatne assistent</p>
+          <h1 className="text-sm font-semibold text-foreground leading-none">Valdo AI Hub</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">Tekst, pildid ja pipeline'id</p>
         </div>
       </div>
       <div className="flex items-center gap-2">

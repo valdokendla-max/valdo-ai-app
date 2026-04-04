@@ -1,15 +1,20 @@
 import { groq } from '@ai-sdk/groq'
 import { generateText } from 'ai'
+import sharp from 'sharp'
+import { getImagePipeline, getImageProvider } from '@/lib/ai-hub'
 
 export const maxDuration = 300
 
 const DEFAULT_NEGATIVE_PROMPT =
-  'low quality, blurry, distorted, deformed, bad anatomy, extra fingers, watermark, text'
+  'low quality, lowres, blurry, out of focus, distorted, deformed, bad anatomy, bad hands, extra fingers, extra limbs, duplicate, cropped, watermark, text, logo'
 
 const DEFAULT_IMAGE_STYLE_PROMPT =
-  'best quality, highly detailed, cinematic lighting, sharp focus, realistic composition'
+  'best quality, highly detailed, cinematic lighting, sharp focus, realistic composition, clean anatomy, coherent subject, readable background'
 
 const DEFAULT_REPLICATE_MODEL = 'black-forest-labs/flux-schnell'
+
+const IMAGE_PROMPT_SYSTEM =
+  'Rewrite the user image request into one concise English prompt for an image model. Preserve the core request exactly: subject, action, scene, camera angle, mood, clothing, colors, and composition when they are explicitly stated. Translate Estonian or mixed-language requests into natural English. Do not add unrelated objects, story details, or style changes that were not requested. If something is vague, keep it simple instead of inventing extra content. Return only the final English prompt, no quotes, no labels, no markdown.'
 
 type ComfyImage = {
   filename: string
@@ -25,6 +30,73 @@ type ImageStatusResponse = {
   error?: string
 }
 
+type RuntimeImageProviderId = 'automatic1111' | 'comfyui' | 'replicate'
+
+function parseDataUrl(input: string) {
+  const match = input.match(/^data:([^;]+);base64,(.+)$/)
+
+  if (!match) {
+    return null
+  }
+
+  const [, contentType, base64] = match
+  return {
+    contentType,
+    buffer: Buffer.from(base64, 'base64'),
+  }
+}
+
+async function readImageBuffer(imageSource: string, signal?: AbortSignal) {
+  const dataUrl = parseDataUrl(imageSource)
+
+  if (dataUrl) {
+    return dataUrl.buffer
+  }
+
+  const response = await fetch(imageSource, {
+    signal,
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch generated image for upscale: ${response.status}.`)
+  }
+
+  return Buffer.from(await response.arrayBuffer())
+}
+
+async function upscaleGeneratedImage(
+  imageSource: string,
+  factor: number,
+  signal?: AbortSignal
+) {
+  if (factor <= 1) {
+    return imageSource
+  }
+
+  const sourceBuffer = await readImageBuffer(imageSource, signal)
+  const metadata = await sharp(sourceBuffer).metadata()
+
+  if (!metadata.width || !metadata.height) {
+    throw new Error('Generated image dimensions could not be determined for upscale.')
+  }
+
+  const width = Math.max(1, Math.round(metadata.width * factor))
+  const height = Math.max(1, Math.round(metadata.height * factor))
+
+  const upscaledBuffer = await sharp(sourceBuffer)
+    .resize({
+      width,
+      height,
+      kernel: sharp.kernel.lanczos3,
+      fit: 'fill',
+    })
+    .png()
+    .toBuffer()
+
+  return `data:image/png;base64,${upscaledBuffer.toString('base64')}`
+}
+
 function getComfyHeaders() {
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -37,19 +109,33 @@ function getComfyHeaders() {
   return headers
 }
 
-function buildWorkflow(prompt: string) {
+function getNumericEnv(name: string, fallback: number) {
+  const value = process.env[name]
+
+  if (!value) {
+    return fallback
+  }
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function buildWorkflow(
+  prompt: string,
+  pipeline: ReturnType<typeof getImagePipeline>
+) {
   const checkpoint = process.env.COMFYUI_CHECKPOINT_NAME
 
   if (!checkpoint) {
     throw new Error('COMFYUI_CHECKPOINT_NAME is missing.')
   }
 
-  const width = Number(process.env.COMFYUI_WIDTH || 384)
-  const height = Number(process.env.COMFYUI_HEIGHT || 384)
-  const steps = Number(process.env.COMFYUI_STEPS || 4)
-  const cfg = Number(process.env.COMFYUI_CFG || 2.5)
-  const samplerName = process.env.COMFYUI_SAMPLER || 'euler'
-  const scheduler = process.env.COMFYUI_SCHEDULER || 'normal'
+  const width = getNumericEnv('COMFYUI_WIDTH', pipeline.comfy.width)
+  const height = getNumericEnv('COMFYUI_HEIGHT', pipeline.comfy.height)
+  const steps = getNumericEnv('COMFYUI_STEPS', pipeline.comfy.steps)
+  const cfg = getNumericEnv('COMFYUI_CFG', pipeline.comfy.cfg)
+  const samplerName = process.env.COMFYUI_SAMPLER || pipeline.comfy.sampler
+  const scheduler = process.env.COMFYUI_SCHEDULER || pipeline.comfy.scheduler
   const negativePrompt =
     process.env.COMFYUI_NEGATIVE_PROMPT || DEFAULT_NEGATIVE_PROMPT
 
@@ -135,40 +221,55 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function buildFallbackImagePrompt(prompt: string) {
-  return `${prompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}`
+function createBackendSignal(signal: AbortSignal, timeoutMs: number) {
+  return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
 }
 
-async function optimizeImagePrompt(prompt: string, signal: AbortSignal) {
+function buildFallbackImagePrompt(
+  prompt: string,
+  pipeline: ReturnType<typeof getImagePipeline>
+) {
+  return `${prompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}, ${pipeline.promptStyle}`
+}
+
+async function optimizeImagePrompt(
+  prompt: string,
+  signal: AbortSignal,
+  pipeline: ReturnType<typeof getImagePipeline>,
+  enhancePrompt: boolean
+) {
   const cleanedPrompt = prompt.trim()
 
   if (!cleanedPrompt) {
     return cleanedPrompt
   }
 
+  if (!enhancePrompt) {
+    return buildFallbackImagePrompt(cleanedPrompt, pipeline)
+  }
+
   if (!process.env.GROQ_API_KEY) {
-    return buildFallbackImagePrompt(cleanedPrompt)
+    return buildFallbackImagePrompt(cleanedPrompt, pipeline)
   }
 
   try {
     const result = await generateText({
-      model: groq('llama-3.1-8b-instant'),
-      system:
-        'Rewrite the user image request into one concise English prompt for a Stable Diffusion style image model. Keep the original intent exactly. Add useful visual detail only when missing. Return only the final prompt, no quotes, no labels.',
+      model: groq('llama-3.3-70b-versatile'),
+      system: IMAGE_PROMPT_SYSTEM,
       prompt: cleanedPrompt,
       abortSignal: signal,
-      temperature: 0.4,
+      temperature: 0.2,
     })
 
-    const optimizedPrompt = result.text.trim()
+    const optimizedPrompt = result.text.trim().replace(/^"|"$/g, '')
 
     if (!optimizedPrompt) {
-      return buildFallbackImagePrompt(cleanedPrompt)
+      return buildFallbackImagePrompt(cleanedPrompt, pipeline)
     }
 
-    return `${optimizedPrompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}`
+    return `${optimizedPrompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}, ${pipeline.promptStyle}`
   } catch {
-    return buildFallbackImagePrompt(cleanedPrompt)
+    return buildFallbackImagePrompt(cleanedPrompt, pipeline)
   }
 }
 
@@ -294,7 +395,11 @@ async function getComfyJobStatus(
   return historyEntry ? { status: 'running' } : { status: 'not_found' }
 }
 
-async function queueComfyUIImage(prompt: string, signal: AbortSignal) {
+async function queueComfyUIImage(
+  prompt: string,
+  signal: AbortSignal,
+  pipeline: ReturnType<typeof getImagePipeline>
+) {
   const baseUrl = process.env.COMFYUI_BASE_URL?.replace(/\/$/, '')
 
   if (!baseUrl) {
@@ -304,7 +409,7 @@ async function queueComfyUIImage(prompt: string, signal: AbortSignal) {
   let workflow: Record<string, unknown>
 
   try {
-    workflow = buildWorkflow(prompt.trim())
+    workflow = buildWorkflow(prompt.trim(), pipeline)
   } catch (error) {
     throw new Error(
       error instanceof Error ? error.message : 'Failed to build ComfyUI workflow.'
@@ -333,7 +438,110 @@ async function queueComfyUIImage(prompt: string, signal: AbortSignal) {
   return { promptId: promptData.prompt_id }
 }
 
-async function createReplicateImage(prompt: string, signal: AbortSignal) {
+function formatReplicateError(errorText: string) {
+  try {
+    const parsed = JSON.parse(errorText) as {
+      title?: string
+      detail?: string
+      status?: number
+    }
+
+    if (parsed.status === 402) {
+      return 'Replicate krediit on otsas. Ava replicate.com/account/billing ja lisa krediiti.'
+    }
+
+    if (parsed.title && parsed.detail) {
+      return `Replicate: ${parsed.title}. ${parsed.detail}`
+    }
+
+    if (parsed.detail) {
+      return `Replicate: ${parsed.detail}`
+    }
+  } catch {
+    // Keep the original error text if it is not valid JSON.
+  }
+
+  return `Replicate error: ${errorText}`
+}
+
+function formatAutomatic1111Error(errorText: string) {
+  try {
+    const parsed = JSON.parse(errorText) as {
+      error?: string
+      detail?: string
+      errors?: string[]
+    }
+
+    if (parsed.error && parsed.detail) {
+      return `Automatic1111: ${parsed.error}. ${parsed.detail}`
+    }
+
+    if (parsed.error) {
+      return `Automatic1111: ${parsed.error}`
+    }
+
+    if (parsed.errors?.length) {
+      return `Automatic1111: ${parsed.errors.join(', ')}`
+    }
+  } catch {
+    // Keep the original error text if it is not valid JSON.
+  }
+
+  return `Automatic1111 error: ${errorText}`
+}
+
+async function createAutomatic1111Image(
+  prompt: string,
+  signal: AbortSignal,
+  pipeline: ReturnType<typeof getImagePipeline>
+) {
+  const baseUrl = process.env.AUTOMATIC1111_BASE_URL?.replace(/\/$/, '')
+
+  if (!baseUrl) {
+    return null
+  }
+
+  const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      prompt,
+      negative_prompt: process.env.AUTOMATIC1111_NEGATIVE_PROMPT || DEFAULT_NEGATIVE_PROMPT,
+      width: getNumericEnv('AUTOMATIC1111_WIDTH', pipeline.comfy.width),
+      height: getNumericEnv('AUTOMATIC1111_HEIGHT', pipeline.comfy.height),
+      steps: getNumericEnv('AUTOMATIC1111_STEPS', pipeline.comfy.steps),
+      cfg_scale: getNumericEnv('AUTOMATIC1111_CFG', pipeline.comfy.cfg),
+      sampler_name: process.env.AUTOMATIC1111_SAMPLER || pipeline.comfy.sampler,
+      batch_size: 1,
+      n_iter: 1,
+      send_images: true,
+      save_images: false,
+    }),
+    signal,
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(formatAutomatic1111Error(error))
+  }
+
+  const result = (await response.json()) as { images?: string[] }
+  const image = result.images?.[0]
+
+  if (!image) {
+    throw new Error('Automatic1111 did not return an image.')
+  }
+
+  return image.startsWith('data:') ? image : `data:image/png;base64,${image}`
+}
+
+async function createReplicateImage(
+  prompt: string,
+  signal: AbortSignal,
+  pipeline: ReturnType<typeof getImagePipeline>
+) {
   const token = process.env.REPLICATE_API_TOKEN
 
   if (!token) {
@@ -359,9 +567,13 @@ async function createReplicateImage(prompt: string, signal: AbortSignal) {
       body: JSON.stringify({
         input: {
           prompt,
-          aspect_ratio: process.env.REPLICATE_ASPECT_RATIO || '1:1',
+          aspect_ratio:
+            process.env.REPLICATE_ASPECT_RATIO || pipeline.replicate.aspectRatio,
           output_format: process.env.REPLICATE_OUTPUT_FORMAT || 'png',
-          output_quality: Number(process.env.REPLICATE_OUTPUT_QUALITY || 100),
+          output_quality: getNumericEnv(
+            'REPLICATE_OUTPUT_QUALITY',
+            pipeline.replicate.outputQuality
+          ),
           num_outputs: 1,
         },
       }),
@@ -371,7 +583,7 @@ async function createReplicateImage(prompt: string, signal: AbortSignal) {
 
   if (!response.ok) {
     const error = await response.text()
-    throw new Error(`Replicate error: ${error}`)
+    throw new Error(formatReplicateError(error))
   }
 
   let prediction = (await response.json()) as {
@@ -411,7 +623,7 @@ async function createReplicateImage(prompt: string, signal: AbortSignal) {
 
     if (!pollResponse.ok) {
       const error = await pollResponse.text()
-      throw new Error(`Replicate polling failed: ${error}`)
+      throw new Error(formatReplicateError(error))
     }
 
     prediction = await pollResponse.json()
@@ -420,8 +632,12 @@ async function createReplicateImage(prompt: string, signal: AbortSignal) {
   throw new Error('Replicate image generation timed out.')
 }
 
-async function createComfyUIImage(prompt: string, signal: AbortSignal) {
-  const queuedJob = await queueComfyUIImage(prompt, signal)
+async function createComfyUIImage(
+  prompt: string,
+  signal: AbortSignal,
+  pipeline: ReturnType<typeof getImagePipeline>
+) {
+  const queuedJob = await queueComfyUIImage(prompt, signal, pipeline)
 
   if (!queuedJob) {
     return null
@@ -476,7 +692,60 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const { prompt }: { prompt?: string } = await req.json()
+  const body = await req.json()
+  const {
+    action,
+    prompt,
+    providerId,
+    pipelineId,
+    enhancePrompt,
+    imageDataUrl,
+  }: {
+    action?: 'generate' | 'upscale'
+    prompt?: string
+    providerId?: string
+    pipelineId?: string
+    enhancePrompt?: boolean
+    imageDataUrl?: string
+  } = body
+
+  if (action === 'upscale') {
+    if (!imageDataUrl) {
+      return new Response(JSON.stringify({ error: 'imageDataUrl is required.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    try {
+      const selectedPipeline = getImagePipeline(pipelineId)
+      const upscaledImage = await upscaleGeneratedImage(
+        imageDataUrl,
+        selectedPipeline.upscaleFactor,
+        req.signal
+      )
+
+      return new Response(
+        JSON.stringify({
+          imageDataUrl: upscaledImage,
+          status: 'done',
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    } catch (error) {
+      return new Response(
+        JSON.stringify({
+          error: error instanceof Error ? error.message : 'Upscale failed.',
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
+  }
 
   if (!prompt?.trim()) {
     return new Response(JSON.stringify({ error: 'Prompt is required.' }), {
@@ -486,44 +755,91 @@ export async function POST(req: Request) {
   }
 
   try {
+    const selectedProvider = getImageProvider(providerId)
+    const selectedPipeline = getImagePipeline(pipelineId)
+    const shouldEnhance = enhancePrompt !== false
     const trimmedPrompt = prompt.trim()
-    const optimizedPrompt = await optimizeImagePrompt(trimmedPrompt, req.signal)
+    const optimizedPrompt = await optimizeImagePrompt(
+      trimmedPrompt,
+      req.signal,
+      selectedPipeline,
+      shouldEnhance
+    )
+    const hasAutomatic1111 = Boolean(process.env.AUTOMATIC1111_BASE_URL)
     const hasComfy = Boolean(process.env.COMFYUI_BASE_URL)
-
-    if (hasComfy) {
-      const queuedJob = await queueComfyUIImage(optimizedPrompt, req.signal)
-
-      if (!queuedJob) {
-        throw new Error('ComfyUI is not configured.')
-      }
-
-      return new Response(
-        JSON.stringify({
-          status: 'queued',
-          promptId: queuedJob.promptId,
-        }),
-        {
-          status: 202,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
-    }
+    const hasReplicate = Boolean(process.env.REPLICATE_API_TOKEN)
 
     let imageDataUrl: string | null = null
     let lastError: Error | null = null
+    let resolvedProviderId: RuntimeImageProviderId | null = null
+    const providerOrder: RuntimeImageProviderId[] =
+      selectedProvider.id === 'auto'
+        ? ['automatic1111', 'comfyui', 'replicate']
+        : [selectedProvider.id as RuntimeImageProviderId]
 
-    try {
-      imageDataUrl = await createReplicateImage(optimizedPrompt, req.signal)
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error('Replicate image generation failed.')
+    for (const candidateProvider of providerOrder) {
+      const isConfigured =
+        (candidateProvider === 'automatic1111' && hasAutomatic1111) ||
+        (candidateProvider === 'comfyui' && hasComfy) ||
+        (candidateProvider === 'replicate' && hasReplicate)
+
+      if (!isConfigured) {
+        continue
+      }
+
+      try {
+        if (candidateProvider === 'automatic1111') {
+          imageDataUrl = await createAutomatic1111Image(
+            optimizedPrompt,
+            createBackendSignal(req.signal, 90000),
+            selectedPipeline
+          )
+          resolvedProviderId = 'automatic1111'
+          break
+        }
+
+        if (candidateProvider === 'comfyui') {
+          const queuedJob = await queueComfyUIImage(
+            optimizedPrompt,
+            createBackendSignal(req.signal, 15000),
+            selectedPipeline
+          )
+
+          if (!queuedJob) {
+            throw new Error('ComfyUI is not configured.')
+          }
+
+          return new Response(
+            JSON.stringify({
+              status: 'queued',
+              promptId: queuedJob.promptId,
+              shouldUpscale: shouldEnhance,
+              provider: 'comfyui',
+            }),
+            {
+              status: 202,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          )
+        }
+
+        imageDataUrl = await createReplicateImage(
+          optimizedPrompt,
+          createBackendSignal(req.signal, 90000),
+          selectedPipeline
+        )
+        resolvedProviderId = 'replicate'
+        break
+      } catch (error) {
+        lastError =
+          error instanceof Error
+            ? error
+            : new Error(`${candidateProvider} image generation failed.`)
+      }
     }
 
-    if (!imageDataUrl) {
-      try {
-        imageDataUrl = await createComfyUIImage(optimizedPrompt, req.signal)
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error('ComfyUI image generation failed.')
-      }
+    if (!imageDataUrl && !lastError) {
+      lastError = new Error('No image backend is configured for the selected provider.')
     }
 
     if (!imageDataUrl) {
@@ -540,9 +856,17 @@ export async function POST(req: Request) {
       )
     }
 
-    return new Response(JSON.stringify({ imageDataUrl }), {
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return new Response(
+      JSON.stringify({
+        imageDataUrl,
+        provider: resolvedProviderId || selectedProvider.id,
+        pipeline: selectedPipeline.id,
+        shouldUpscale: shouldEnhance,
+      }),
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
   } catch (error) {
     return new Response(
       JSON.stringify({

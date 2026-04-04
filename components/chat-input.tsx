@@ -2,6 +2,13 @@
 
 import { useRef, useEffect } from 'react'
 import { ArrowUp, ImagePlus, Loader2, MessageSquare } from 'lucide-react'
+import { HubControls } from '@/components/hub-controls'
+import type {
+  ImagePipelineId,
+  ImageProviderId,
+  PromptProfileId,
+  TextModelId,
+} from '@/lib/ai-hub'
 import { cn } from '@/lib/utils'
 
 interface ChatInputProps {
@@ -12,6 +19,16 @@ interface ChatInputProps {
   error?: string
   isImageMode: boolean
   onToggleImageMode: () => void
+  textModelId: TextModelId
+  promptProfileId: PromptProfileId
+  imageProviderId: ImageProviderId
+  imagePipelineId: ImagePipelineId
+  enhancePrompt: boolean
+  onTextModelChange: (value: TextModelId) => void
+  onPromptProfileChange: (value: PromptProfileId) => void
+  onImageProviderChange: (value: ImageProviderId) => void
+  onImagePipelineChange: (value: ImagePipelineId) => void
+  onEnhancePromptChange: (value: boolean) => void
 }
 
 export function ChatInput({
@@ -22,8 +39,20 @@ export function ChatInput({
   error,
   isImageMode,
   onToggleImageMode,
+  textModelId,
+  promptProfileId,
+  imageProviderId,
+  imagePipelineId,
+  enhancePrompt,
+  onTextModelChange,
+  onPromptProfileChange,
+  onImageProviderChange,
+  onImagePipelineChange,
+  onEnhancePromptChange,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const textareaId = isImageMode ? 'image-prompt-input' : 'chat-message-input'
+  const helperTextId = isImageMode ? 'image-prompt-help' : 'chat-message-help'
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -55,12 +84,30 @@ export function ChatInput({
             {isImageMode ? 'Tekstireziim' : 'Loo pilt'}
           </button>
           <p className="text-xs text-muted-foreground">
-            {isImageMode ? 'Saadan sinu kirjelduse ComfyUI pildigeneraatorile' : 'Saadan prompti tekstimudelile'}
+            {isImageMode ? 'Saadan kirjelduse valitud pildipipeline' : 'Saadan prompti valitud tekstimudelile'}
           </p>
+        </div>
+        <div className="mb-3">
+          <HubControls
+            isImageMode={isImageMode}
+            textModelId={textModelId}
+            promptProfileId={promptProfileId}
+            imageProviderId={imageProviderId}
+            imagePipelineId={imagePipelineId}
+            enhancePrompt={enhancePrompt}
+            onTextModelChange={onTextModelChange}
+            onPromptProfileChange={onPromptProfileChange}
+            onImageProviderChange={onImageProviderChange}
+            onImagePipelineChange={onImagePipelineChange}
+            onEnhancePromptChange={onEnhancePromptChange}
+          />
         </div>
         <div className="flex items-end gap-2 rounded-2xl border border-border bg-card p-2 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
           <textarea
             ref={textareaRef}
+            id={textareaId}
+            name={textareaId}
+            aria-describedby={helperTextId}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -96,10 +143,10 @@ export function ChatInput({
             {error}
           </p>
         ) : (
-          <p className="mt-2 text-center text-xs text-muted-foreground">
+          <p id={helperTextId} className="mt-2 text-center text-xs text-muted-foreground">
             {isImageMode
-              ? 'Kirjuta siia ainult pildi kirjeldus. Midagi siia eraldi seadistama ei pea.'
-              : 'Valdo AI - Sinu privaatne assistent'}
+              ? 'Kirjuta siia pildi kirjeldus ja kasuta uleval backendi, pipeline\'i ning enhance lülitit.'
+              : 'Valdo AI Hub - vali mudel ja prompti profiil vastavalt tööle'}
           </p>
         )}
       </div>

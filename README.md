@@ -76,3 +76,40 @@ Märkused:
 - Kui COMFYUI_BASE_URL on olemas, pannakse pilditöö ComfyUI järjekorda ja UI kontrollib selle olekut eraldi, nii et brauser ei jää ühe pika requesti taha kinni.
 - Kui REPLICATE_API_TOKEN puudub, proovib app kasutada ComfyUI backendit.
 - UI-s saad pildireziimi sisse lülitada nupuga Loo pilt.
+
+### Backend health ja pildi staatused
+
+- `/api/backends/health` kontrollib ComfyUI ja Replicate seisu.
+- UI näitab pildireziimis eraldi staatuseid `queued`, `running`, `enhancing` ja `done`.
+- Kui `enhance` on sees, tehakse upscale eraldi järel-sammuna, mitte ei peideta seda `running` alla.
+
+### Vercel deploy
+
+See repo on nüüd lingitud Verceli projektiga `valdo-ai-app`.
+
+Oluline piirang:
+- `localhost` aadressid ei tööta Vercelis. Kui tahad ComfyUI tuge productionis, peab `COMFYUI_BASE_URL` viitama avalikult kättesaadavale backendile.
+- Kui sul avalikku pildibackendit ei ole, siis productionis on mõistlik kasutada `REPLICATE_API_TOKEN` põhist varianti.
+
+Soovitatavad Verceli env-id:
+
+```env
+GROQ_API_KEY=
+REPLICATE_API_TOKEN=
+REPLICATE_MODEL=black-forest-labs/flux-schnell
+REPLICATE_ASPECT_RATIO=1:1
+REPLICATE_OUTPUT_FORMAT=png
+REPLICATE_OUTPUT_QUALITY=100
+
+# ainult siis, kui backend on avalik
+COMFYUI_BASE_URL=
+COMFYUI_CHECKPOINT_NAME=
+COMFYUI_API_KEY=
+COMFYUI_NEGATIVE_PROMPT=
+COMFYUI_WIDTH=
+COMFYUI_HEIGHT=
+COMFYUI_STEPS=
+COMFYUI_CFG=
+COMFYUI_SAMPLER=
+COMFYUI_SCHEDULER=
+```

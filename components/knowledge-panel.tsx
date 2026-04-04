@@ -30,6 +30,10 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
   const [content, setContent] = useState('')
   const [category, setCategory] = useState<KnowledgeItem['category']>('juhis')
   const [isLoading, setIsLoading] = useState(false)
+  const dialogTitleId = 'knowledge-panel-title'
+  const dialogDescriptionId = 'knowledge-panel-description'
+  const titleInputId = 'knowledge-item-title'
+  const contentInputId = 'knowledge-item-content'
 
   const fetchItems = async () => {
     try {
@@ -88,27 +92,44 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative ml-auto flex h-full w-full max-w-lg flex-col bg-card border-l border-border shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={dialogTitleId}
+        aria-describedby={dialogDescriptionId}
+        className="relative ml-auto flex h-full w-full max-w-lg flex-col bg-card border-l border-border shadow-2xl"
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
-            <button onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:text-foreground hover:bg-secondary">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Sulge teadmistebaas"
+              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:text-foreground hover:bg-secondary"
+            >
               <ArrowLeft className="h-4 w-4" />
             </button>
             <div>
-              <h2 className="text-sm font-semibold text-foreground">Teadmistebaas</h2>
-              <p className="text-xs text-muted-foreground">{items.length} kirjet</p>
+              <h2 id={dialogTitleId} className="text-sm font-semibold text-foreground">Teadmistebaas</h2>
+              <p id={dialogDescriptionId} className="text-xs text-muted-foreground">{items.length} kirjet</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => setIsAdding(true)}
               className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
             >
               <Plus className="h-3 w-3" />
               Lisa
             </button>
-            <button onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:text-foreground hover:bg-secondary">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Sulge teadmistebaas"
+              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:text-foreground hover:bg-secondary"
+            >
               <X className="h-4 w-4" />
             </button>
           </div>
@@ -119,6 +140,8 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
           <div className="border-b border-border p-5">
             <div className="flex flex-col gap-3">
               <input
+                id={titleInputId}
+                name={titleInputId}
                 type="text"
                 placeholder="Pealkiri..."
                 value={title}
@@ -131,6 +154,7 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
                   const Icon = config.icon
                   return (
                     <button
+                      type="button"
                       key={key}
                       onClick={() => setCategory(key)}
                       className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
@@ -146,6 +170,9 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
                 })}
               </div>
               <textarea
+                id={contentInputId}
+                name={contentInputId}
+                aria-describedby={dialogDescriptionId}
                 placeholder="Sisu... (nt. juhised, naidistekst, faktid)"
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
@@ -154,12 +181,14 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
               />
               <div className="flex justify-end gap-2">
                 <button
+                  type="button"
                   onClick={() => { setIsAdding(false); setTitle(''); setContent('') }}
                   className="rounded-lg bg-secondary px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
                 >
                   Tuhista
                 </button>
                 <button
+                  type="button"
                   onClick={handleAdd}
                   disabled={!title.trim() || !content.trim() || isLoading}
                   className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
@@ -199,7 +228,9 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
                         </div>
                       </div>
                       <button
+                        type="button"
                         onClick={() => handleDelete(item.id)}
+                        aria-label={`Kustuta kirje ${item.title}`}
                         className="rounded-md p-1 text-muted-foreground opacity-0 transition-all hover:text-destructive group-hover:opacity-100"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
