@@ -35,7 +35,7 @@ interface HubControlsProps {
 }
 
 const baseSelectClassName =
-  'w-full rounded-lg border border-border/70 bg-card/70 px-2.5 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30'
+  'w-full rounded-lg border border-border/70 bg-card/60 px-2.5 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/30'
 
 export function HubControls({
   isImageMode,
@@ -92,7 +92,7 @@ export function HubControls({
       PROMPT_PROFILES.find((profile) => profile.id === DEFAULT_PROMPT_PROFILE_ID)?.description
 
   return (
-    <div className="grid gap-1.5 rounded-xl border border-border/60 bg-card/30 p-2.5 sm:grid-cols-2">
+    <div className="grid gap-1.5 rounded-xl border border-border/50 bg-card/20 p-2 sm:grid-cols-2">
       {isImageMode ? (
         <>
           <label className="flex flex-col gap-1">
@@ -184,7 +184,7 @@ export function HubControls({
         </>
       )}
 
-      <div className="sm:col-span-2 rounded-lg bg-background/50 px-3 py-1.5 text-[11px] text-muted-foreground">
+      <div className="sm:col-span-2 rounded-lg bg-background/40 px-3 py-1.5 text-[11px] text-muted-foreground">
         {primaryDescription} {' · '} {secondaryDescription}
       </div>
     </div>

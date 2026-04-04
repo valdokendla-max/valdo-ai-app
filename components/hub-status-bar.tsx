@@ -69,6 +69,8 @@ export function HubStatusBar({
   const activeImageProvider =
     IMAGE_PROVIDERS.find((provider) => provider.id === activeImageProviderId)?.label ||
     activeImageProviderId
+  const showsFailoverBadge =
+    imageProviderId === 'auto' && Boolean(activeImageProviderId) && activeImageProviderId !== 'automatic1111'
 
   const imageStageLabelMap = {
     idle: 'Ootel',
@@ -132,6 +134,7 @@ export function HubStatusBar({
                 : selectedImageProvider
             }`}
           />
+          {showsFailoverBadge ? <InfoPill value="Failover aktiivne" /> : null}
         </div>
       </div>
     )
