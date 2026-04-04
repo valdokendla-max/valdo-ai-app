@@ -20,9 +20,14 @@ interface HubStatusBarProps {
   enhancePrompt: boolean
   imageStage?: 'idle' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
   backendHealth?: {
+    automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
     comfyui: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
     replicate: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
   } | null
+}
+
+function isVisibleHealthStatus(status: 'connected' | 'configured' | 'missing' | 'error') {
+  return status !== 'missing'
 }
 
 function StatusChip({ label, value }: { label: string; value: string }) {
@@ -47,18 +52,16 @@ export function HubStatusBar({
   const textModel = TEXT_MODELS.find((model) => model.id === textModelId)?.label || textModelId
   const promptProfile =
     PROMPT_PROFILES.find((profile) => profile.id === promptProfileId)?.label || promptProfileId
-  const imageProvider =
-    IMAGE_PROVIDERS.find((provider) => provider.id === imageProviderId)?.label || imageProviderId
   const imagePipeline =
     IMAGE_PIPELINES.find((pipeline) => pipeline.id === imagePipelineId)?.label || imagePipelineId
 
   const imageStageLabelMap = {
     idle: 'Ootel',
-    queued: 'Queued',
-    running: 'Running',
-    enhancing: 'Enhancing',
-    done: 'Done',
-    failed: 'Failed',
+    queued: 'Järjekorras',
+    running: 'Genereerib',
+    enhancing: 'Täiustab',
+    done: 'Valmis',
+    failed: 'Viga',
   } as const
 
   const healthTone = {
@@ -81,32 +84,34 @@ export function HubStatusBar({
         <StatusChip label="Reziim" value={isImageMode ? 'Pilt' : 'Tekst'} />
         {isImageMode ? (
           <>
-            <StatusChip label="Backend" value={imageProvider} />
             <StatusChip label="Pipeline" value={imagePipeline} />
-            <StatusChip label="Enhance" value={enhancePrompt ? 'Sees' : 'Väljas'} />
+            <StatusChip label="Töövoog" value={enhancePrompt ? '3 sammu' : '1 samm'} />
             <StatusChip label="Staatus" value={imageStageLabelMap[imageStage]} />
           </>
         ) : (
           <>
             <StatusChip label="Mudeli valik" value={textModel} />
             <StatusChip label="Prompti profiil" value={promptProfile} />
-            <StatusChip label="Pildi backend" value={imageProvider} />
+            <StatusChip label="Staatus" value="Valmis" />
           </>
         )}
       </div>
       {backendHealth ? (
         <div className="mx-auto mt-2 flex max-w-3xl flex-wrap gap-2">
           {[
+            { label: 'Automatic1111', entry: backendHealth.automatic1111 },
             { label: 'ComfyUI', entry: backendHealth.comfyui },
             { label: 'Replicate', entry: backendHealth.replicate },
-          ].map(({ label, entry }) => (
+          ]
+            .filter(({ entry }) => isVisibleHealthStatus(entry.status))
+            .map(({ label, entry }) => (
             <div
               key={label}
               className={`rounded-full border px-3 py-1 text-xs ${healthTone[entry.status]}`}
             >
               {label}: {healthLabel[entry.status]} · {entry.detail}
             </div>
-          ))}
+            ))}
         </div>
       ) : null}
     </div>

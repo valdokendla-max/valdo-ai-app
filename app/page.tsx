@@ -31,6 +31,7 @@ type ImageStatusResponse = {
 }
 
 type BackendHealthResponse = {
+  automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
   comfyui: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
   replicate: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
 }
@@ -476,6 +477,7 @@ export default function ValdoAI() {
         imageProviderId={imageProviderId}
         imagePipelineId={imagePipelineId}
         enhancePrompt={enhancePrompt}
+        backendHealth={backendHealth}
         onTextModelChange={setTextModelId}
         onPromptProfileChange={setPromptProfileId}
         onImageProviderChange={setImageProviderId}

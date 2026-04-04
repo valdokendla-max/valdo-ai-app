@@ -22,6 +22,11 @@ interface HubControlsProps {
   imageProviderId: ImageProviderId
   imagePipelineId: ImagePipelineId
   enhancePrompt: boolean
+  backendHealth?: {
+    automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
+    comfyui: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
+    replicate: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
+  } | null
   onTextModelChange: (value: TextModelId) => void
   onPromptProfileChange: (value: PromptProfileId) => void
   onImageProviderChange: (value: ImageProviderId) => void
@@ -39,14 +44,43 @@ export function HubControls({
   imageProviderId,
   imagePipelineId,
   enhancePrompt,
+  backendHealth,
   onTextModelChange,
   onPromptProfileChange,
   onImageProviderChange,
   onImagePipelineChange,
   onEnhancePromptChange,
 }: HubControlsProps) {
+  const availableImageProviders = IMAGE_PROVIDERS.filter((provider) => {
+    if (!isImageMode) {
+      return true
+    }
+
+    if (!backendHealth) {
+      return provider.id !== 'replicate'
+    }
+
+    if (provider.id === 'automatic1111') {
+      return backendHealth.automatic1111.status !== 'missing'
+    }
+
+    if (provider.id === 'replicate') {
+      return backendHealth.replicate.status !== 'missing'
+    }
+
+    if (provider.id === 'auto') {
+      return (
+        backendHealth.automatic1111.status !== 'missing' ||
+        backendHealth.comfyui.status !== 'missing' ||
+        backendHealth.replicate.status !== 'missing'
+      )
+    }
+
+    return backendHealth.comfyui.status !== 'missing'
+  })
+
   const primaryDescription = isImageMode
-    ? IMAGE_PROVIDERS.find((provider) => provider.id === imageProviderId)?.description ||
+    ? availableImageProviders.find((provider) => provider.id === imageProviderId)?.description ||
       IMAGE_PROVIDERS.find((provider) => provider.id === DEFAULT_IMAGE_PROVIDER_ID)?.description
     : TEXT_MODELS.find((model) => model.id === textModelId)?.description ||
       TEXT_MODELS.find((model) => model.id === DEFAULT_TEXT_MODEL_ID)?.description
@@ -70,7 +104,7 @@ export function HubControls({
               onChange={(event) => onImageProviderChange(event.target.value as ImageProviderId)}
               className={baseSelectClassName}
             >
-              {IMAGE_PROVIDERS.map((provider) => (
+              {availableImageProviders.map((provider) => (
                 <option key={provider.id} value={provider.id}>
                   {provider.label}
                 </option>
@@ -104,11 +138,11 @@ export function HubControls({
                 : 'border-border bg-card/70 text-muted-foreground'
             }`}
           >
-            <span className="block font-medium">Enhance prompt</span>
+            <span className="block font-medium">3-sammuline töötlus</span>
             <span className="block text-xs opacity-80">
               {enhancePrompt
                 ? 'Prompt täpsustatakse, pilt genereeritakse ja lõpus tehakse upscale.'
-                : 'Pilt tehakse ilma prompti täiendamise ja järel-upscale sammuta.'}
+                : 'Kasutatakse ühte otsegeneratsiooni sammu ilma täiendava töötluseta.'}
             </span>
           </button>
         </>

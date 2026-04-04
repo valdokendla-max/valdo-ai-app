@@ -8,9 +8,9 @@ interface ChatWelcomeProps {
 
 const suggestions = [
   'Selgita mulle kvantarvutuse pohimotteid',
-  'Loo pilt udusest metsast kuuvalguses',
+  'Loo pilt noorest naisest punases kleidis uduses männimetsas kuuvalguses, cinematic, realistic',
   'Kirjuta Python skript failide sorteerimiseks',
-  'Mis on parimad produktiivsuse nipid?',
+  'Loo pilt mustast kassist aknal vihmase ilmaga, close-up, soft light',
 ]
 
 export function ChatWelcome({ onSuggestionClick }: ChatWelcomeProps) {
@@ -53,10 +53,10 @@ export function ChatWelcome({ onSuggestionClick }: ChatWelcomeProps) {
           </p>
         </div>
         <div className="rounded-2xl border border-border bg-card/80 p-4 text-left">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Enhance</p>
-          <h2 className="mt-2 text-sm font-semibold text-foreground">3 sammu</h2>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Prompt</p>
+          <h2 className="mt-2 text-sm font-semibold text-foreground">Parema pildi valem</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Prompti täpsustus, genereerimine ja serveripoolne upscale.
+            Subjekt + koht + valgus + stiil annab parema tulemuse kui üksik sõna.
           </p>
         </div>
       </div>

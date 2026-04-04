@@ -24,6 +24,11 @@ interface ChatInputProps {
   imageProviderId: ImageProviderId
   imagePipelineId: ImagePipelineId
   enhancePrompt: boolean
+  backendHealth?: {
+    automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
+    comfyui: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
+    replicate: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
+  } | null
   onTextModelChange: (value: TextModelId) => void
   onPromptProfileChange: (value: PromptProfileId) => void
   onImageProviderChange: (value: ImageProviderId) => void
@@ -44,6 +49,7 @@ export function ChatInput({
   imageProviderId,
   imagePipelineId,
   enhancePrompt,
+  backendHealth,
   onTextModelChange,
   onPromptProfileChange,
   onImageProviderChange,
@@ -84,7 +90,7 @@ export function ChatInput({
             {isImageMode ? 'Tekstireziim' : 'Loo pilt'}
           </button>
           <p className="text-xs text-muted-foreground">
-            {isImageMode ? 'Saadan kirjelduse valitud pildipipeline' : 'Saadan prompti valitud tekstimudelile'}
+            {isImageMode ? 'Saadan kirjelduse valitud pilditöövoole' : 'Saadan prompti valitud tekstimudelile'}
           </p>
         </div>
         <div className="mb-3">
@@ -95,6 +101,7 @@ export function ChatInput({
             imageProviderId={imageProviderId}
             imagePipelineId={imagePipelineId}
             enhancePrompt={enhancePrompt}
+            backendHealth={backendHealth}
             onTextModelChange={onTextModelChange}
             onPromptProfileChange={onPromptProfileChange}
             onImageProviderChange={onImageProviderChange}
@@ -145,7 +152,7 @@ export function ChatInput({
         ) : (
           <p id={helperTextId} className="mt-2 text-center text-xs text-muted-foreground">
             {isImageMode
-              ? 'Kirjuta siia pildi kirjeldus ja kasuta uleval backendi, pipeline\'i ning enhance lülitit.'
+              ? 'Parim tulemus: subjekt + tegevus + koht + valgus + stiil. Naide: noor naine punases kleidis uduses metsas kuuvalguses, cinematic, realistic.'
               : 'Valdo AI Hub - vali mudel ja prompti profiil vastavalt tööle'}
           </p>
         )}
