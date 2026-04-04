@@ -30,6 +30,14 @@ type ImageStatusResponse = {
   error?: string
 }
 
+type ImageGenerateResponse = {
+  imageDataUrl?: string
+  promptId?: string
+  shouldUpscale?: boolean
+  provider?: ImageProviderId
+  error?: string
+}
+
 type BackendHealthResponse = {
   automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
   comfyui: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
@@ -100,6 +108,7 @@ export default function ValdoAI() {
   const [enhancePrompt, setEnhancePrompt] = useState(true)
   const [imageStage, setImageStage] = useState<DisplayImageStage>('idle')
   const [backendHealth, setBackendHealth] = useState<BackendHealthResponse | null>(null)
+  const [activeImageProviderId, setActiveImageProviderId] = useState<ImageProviderId | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -334,6 +343,7 @@ export default function ValdoAI() {
     setImageError(undefined)
     setIsImageLoading(true)
     setImageStage('queued')
+    setActiveImageProviderId(imageProviderId === 'auto' ? null : imageProviderId)
     setInput('')
     setMessages((current) => [...current, userMessage, placeholderMessage])
 
@@ -349,10 +359,14 @@ export default function ValdoAI() {
         }),
       })
 
-      const data = await response.json()
+      const data = (await response.json()) as ImageGenerateResponse
 
       if (!response.ok) {
         throw new Error(data.error || 'Pildi loomine ebaõnnestus.')
+      }
+
+      if (data.provider) {
+        setActiveImageProviderId(data.provider)
       }
 
       if (data.imageDataUrl) {
@@ -380,6 +394,7 @@ export default function ValdoAI() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Pildi loomine ebaõnnestus.'
       setImageStage('failed')
+      setActiveImageProviderId(null)
       setImageError(undefined)
       setMessages((current) =>
         current.map((entry) =>
@@ -418,6 +433,7 @@ export default function ValdoAI() {
     setImageError(undefined)
     setIsImageLoading(false)
     setImageStage('idle')
+    setActiveImageProviderId(null)
   }
 
   return (
@@ -428,6 +444,7 @@ export default function ValdoAI() {
         textModelId={textModelId}
         promptProfileId={promptProfileId}
         imageProviderId={imageProviderId}
+        activeImageProviderId={activeImageProviderId}
         imagePipelineId={imagePipelineId}
         enhancePrompt={enhancePrompt}
         imageStage={imageStage}

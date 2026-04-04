@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  IMAGE_PROVIDERS,
   IMAGE_PIPELINES,
   PROMPT_PROFILES,
   TEXT_MODELS,
@@ -15,6 +16,7 @@ interface HubStatusBarProps {
   textModelId: TextModelId
   promptProfileId: PromptProfileId
   imageProviderId: ImageProviderId
+  activeImageProviderId?: ImageProviderId | null
   imagePipelineId: ImagePipelineId
   enhancePrompt: boolean
   imageStage?: 'idle' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
@@ -38,11 +40,20 @@ function StatusChip({ label, value }: { label: string; value: string }) {
   )
 }
 
+function InfoPill({ value }: { value: string }) {
+  return (
+    <div className="inline-flex items-center rounded-full border border-border/60 bg-card/40 px-2.5 py-1 text-[11px] text-muted-foreground">
+      {value}
+    </div>
+  )
+}
+
 export function HubStatusBar({
   isImageMode,
   textModelId,
   promptProfileId,
   imageProviderId,
+  activeImageProviderId,
   imagePipelineId,
   enhancePrompt,
   imageStage = 'idle',
@@ -53,6 +64,11 @@ export function HubStatusBar({
     PROMPT_PROFILES.find((profile) => profile.id === promptProfileId)?.label || promptProfileId
   const imagePipeline =
     IMAGE_PIPELINES.find((pipeline) => pipeline.id === imagePipelineId)?.label || imagePipelineId
+  const selectedImageProvider =
+    IMAGE_PROVIDERS.find((provider) => provider.id === imageProviderId)?.label || imageProviderId
+  const activeImageProvider =
+    IMAGE_PROVIDERS.find((provider) => provider.id === activeImageProviderId)?.label ||
+    activeImageProviderId
 
   const imageStageLabelMap = {
     idle: 'Ootel',
@@ -96,6 +112,26 @@ export function HubStatusBar({
           <div className="inline-flex items-center rounded-full border border-border/60 bg-card/40 px-2.5 py-1 text-[11px] text-muted-foreground">
             Tekstireziim · valmis
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (isImageMode && !showHealthSection) {
+    return (
+      <div className="border-b border-border/50 bg-background/55 px-4 py-1.5 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-3xl flex-wrap gap-1.5">
+          <InfoPill value="Pildireziim" />
+          <InfoPill value={`Pipeline · ${imagePipeline}`} />
+          <InfoPill value={`Töötlus · ${enhancePrompt ? '3 sammu' : '1 samm'}`} />
+          <InfoPill value={`Staatus · ${imageStageLabelMap[imageStage]}`} />
+          <InfoPill
+            value={`Backend · ${
+              imageProviderId === 'auto'
+                ? activeImageProvider || 'Auto'
+                : selectedImageProvider
+            }`}
+          />
         </div>
       </div>
     )
