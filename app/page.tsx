@@ -18,8 +18,19 @@ import {
   type PromptProfileId,
   type TextModelId,
 } from '@/lib/ai-hub'
+import {
+  buildImageStatusText,
+  createTextMessage,
+  parseStoredMessages,
+  PUBLIC_HOST,
+  PROTECTED_HOSTS,
+  resolveClientApiPath,
+  sanitizeMessagesForChatModel,
+  serializeMessagesForStorage,
+  type ChatStreamEvent,
+  type ImageJobStatus,
+} from '@/lib/chat-client'
 
-type ImageJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found'
 type DisplayImageStage = 'idle' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
 
 type ImageStatusResponse = {
@@ -41,73 +52,8 @@ type BackendHealthResponse = {
   comfyui: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
   replicate: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
 }
-
-type ChatStreamEvent =
-  | { type: 'text-delta'; delta: string }
-  | { type: 'finish' }
-  | { type: string; [key: string]: unknown }
-
-const GENERATED_IMAGE_MARKDOWN_REGEX = /!\[[^\]]*\]\(data:image\/[^)]+\)/g
 const HUB_SETTINGS_STORAGE_KEY = 'valdo-ai-hub-settings'
-const PUBLIC_HOST = 'valdo-ai-webapp.vercel.app'
-const PROTECTED_HOSTS = new Set([
-  'valdo-ai-webapp-valdos-projects-48d5db42.vercel.app',
-  'valdo-ai-webapp-git-main-valdos-projects-48d5db42.vercel.app',
-])
-
-function resolveClientApiPath(path: string) {
-  if (typeof window === 'undefined') {
-    return path
-  }
-
-  if (!PROTECTED_HOSTS.has(window.location.host)) {
-    return path
-  }
-
-  return `https://${PUBLIC_HOST}${path}`
-}
-
-function createTextMessage(role: 'user' | 'assistant', text: string): UIMessage {
-  return {
-    id: crypto.randomUUID(),
-    role,
-    parts: [{ type: 'text', text }],
-  }
-}
-
-function sanitizeMessagesForChatModel(messages: UIMessage[]) {
-  return messages.map((message) => ({
-    ...message,
-    parts: message.parts?.map((part) => {
-      if (part.type !== 'text') {
-        return part
-      }
-
-      return {
-        ...part,
-        text: part.text.replace(
-          GENERATED_IMAGE_MARKDOWN_REGEX,
-          '[Genereeritud pilt jäeti tekstimudeli kontekstist välja.]'
-        ),
-      }
-    }),
-  }))
-}
-
-function buildImageStatusText(prompt: string, status: Exclude<ImageJobStatus, 'succeeded'>) {
-  switch (status) {
-    case 'queued':
-      return `Pildi loomine on järjekorras: **${prompt}**`
-    case 'running':
-      return `Loon pilti promptist: **${prompt}**`
-    case 'failed':
-      return `Pildi loomine ebaõnnestus promptiga: **${prompt}**`
-    case 'not_found':
-      return `Pildi töö kadus järjekorrast enne valmimist: **${prompt}**`
-    default:
-      return 'Loon pilti...'
-  }
-}
+const CHAT_MESSAGES_STORAGE_KEY = 'valdo-ai-chat-messages'
 
 export default function ValdoAI() {
   const [messages, setMessages] = useState<UIMessage[]>([])
@@ -194,6 +140,12 @@ export default function ValdoAI() {
       return
     }
 
+    const storedMessages = parseStoredMessages(window.localStorage.getItem(CHAT_MESSAGES_STORAGE_KEY))
+
+    if (storedMessages.length > 0) {
+      setMessages(storedMessages)
+    }
+
     const stored = window.localStorage.getItem(HUB_SETTINGS_STORAGE_KEY)
 
     if (!stored) {
@@ -220,6 +172,22 @@ export default function ValdoAI() {
       window.localStorage.removeItem(HUB_SETTINGS_STORAGE_KEY)
     }
   }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    if (messages.length === 0) {
+      window.localStorage.removeItem(CHAT_MESSAGES_STORAGE_KEY)
+      return
+    }
+
+    window.localStorage.setItem(
+      CHAT_MESSAGES_STORAGE_KEY,
+      JSON.stringify(serializeMessagesForStorage(messages))
+    )
+  }, [messages])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
