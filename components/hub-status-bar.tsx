@@ -89,6 +89,18 @@ export function HubStatusBar({
     ({ entry }) => entry.status === 'error'
   )
 
+  if (!isImageMode && !showHealthSection) {
+    return (
+      <div className="border-b border-border/50 bg-background/50 px-4 py-1.5 backdrop-blur-sm">
+        <div className="mx-auto max-w-3xl">
+          <div className="inline-flex items-center rounded-full border border-border/60 bg-card/40 px-2.5 py-1 text-[11px] text-muted-foreground">
+            Tekstireziim · valmis
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="border-b border-border/60 bg-background/60 px-4 py-2 backdrop-blur-sm">
       <div className="mx-auto flex max-w-3xl flex-wrap gap-1.5">
