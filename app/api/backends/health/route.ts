@@ -10,6 +10,8 @@ type BackendHealthEntry = {
   detail: string
 }
 
+const HEALTH_CHECK_TIMEOUT_MS = 5_000
+
 function withRuntimeDetail(providerId: RuntimeImageProviderId, detail: string) {
   const runtime = getBackendRuntimeSnapshot(providerId)
   const scoreText = `score ${runtime.score}`
@@ -61,6 +63,13 @@ function getErrorDetail(error: unknown) {
   return error.message || 'Vastus puudub'
 }
 
+async function fetchWithHealthTimeout(input: string, init?: RequestInit) {
+  return fetch(input, {
+    ...init,
+    signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
+  })
+}
+
 async function checkComfyUI(): Promise<BackendHealthEntry> {
   const baseUrl = process.env.COMFYUI_BASE_URL?.replace(/\/$/, '')
 
@@ -74,46 +83,10 @@ async function checkComfyUI(): Promise<BackendHealthEntry> {
   const host = toDisplayHost(baseUrl)
 
   try {
-    const response = await fetch(`${baseUrl}/system_stats`, {
+    const response = await fetchWithHealthTimeout(`${baseUrl}/system_stats`, {
       headers: process.env.COMFYUI_API_KEY
         ? { Authorization: `Bearer ${process.env.COMFYUI_API_KEY}` }
         : undefined,
-      cache: 'no-store',
-    })
-
-    if (!response.ok) {
-      return {
-        status: 'error',
-        detail: `${host}: ${describeHttpStatus(response.status)}`,
-      }
-    }
-
-    return {
-      status: 'connected',
-      detail: withRuntimeDetail('automatic1111', `${host}: uhendus olemas`),
-    }
-  } catch (error) {
-    return {
-      status: 'error',
-      detail: withRuntimeDetail('automatic1111', `${host}: ${getErrorDetail(error)}`),
-    }
-  }
-}
-
-async function checkAutomatic1111(): Promise<BackendHealthEntry> {
-  const baseUrl = process.env.AUTOMATIC1111_BASE_URL?.replace(/\/$/, '')
-
-  if (!baseUrl) {
-    return {
-      status: 'missing',
-      detail: 'AUTOMATIC1111_BASE_URL puudub',
-    }
-  }
-
-  const host = toDisplayHost(baseUrl)
-
-  try {
-    const response = await fetch(`${baseUrl}/sdapi/v1/options`, {
       cache: 'no-store',
     })
 
@@ -132,6 +105,42 @@ async function checkAutomatic1111(): Promise<BackendHealthEntry> {
     return {
       status: 'error',
       detail: withRuntimeDetail('comfyui', `${host}: ${getErrorDetail(error)}`),
+    }
+  }
+}
+
+async function checkAutomatic1111(): Promise<BackendHealthEntry> {
+  const baseUrl = process.env.AUTOMATIC1111_BASE_URL?.replace(/\/$/, '')
+
+  if (!baseUrl) {
+    return {
+      status: 'missing',
+      detail: 'AUTOMATIC1111_BASE_URL puudub',
+    }
+  }
+
+  const host = toDisplayHost(baseUrl)
+
+  try {
+    const response = await fetchWithHealthTimeout(`${baseUrl}/sdapi/v1/options`, {
+      cache: 'no-store',
+    })
+
+    if (!response.ok) {
+      return {
+        status: 'error',
+        detail: `${host}: ${describeHttpStatus(response.status)}`,
+      }
+    }
+
+    return {
+      status: 'connected',
+      detail: withRuntimeDetail('automatic1111', `${host}: uhendus olemas`),
+    }
+  } catch (error) {
+    return {
+      status: 'error',
+      detail: withRuntimeDetail('automatic1111', `${host}: ${getErrorDetail(error)}`),
     }
   }
 }

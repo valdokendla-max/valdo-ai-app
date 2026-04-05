@@ -1,7 +1,12 @@
 import { groq } from '@ai-sdk/groq'
 import { generateText } from 'ai'
 import sharp from 'sharp'
-import { getImagePipeline, getImageProvider } from '@/lib/ai-hub'
+import {
+  getDimensionsForAspectRatio,
+  getImagePipeline,
+  getImageProvider,
+  getImageStylePreset,
+} from '@/lib/ai-hub'
 import {
   isBackendCoolingDown,
   recordBackendFailure,
@@ -9,19 +14,28 @@ import {
   sortProvidersForAuto,
   type RuntimeImageProviderId,
 } from '@/lib/image-backend-runtime'
+import { imageRequestSchema } from '@/lib/server/api-schemas'
+import {
+  createValidationErrorResponse,
+  parseJsonBody,
+} from '@/lib/server/request-validation'
 
 export const maxDuration = 300
 
 const DEFAULT_NEGATIVE_PROMPT =
-  'low quality, lowres, blurry, out of focus, distorted, deformed, bad anatomy, bad hands, extra fingers, extra limbs, duplicate, cropped, watermark, text, logo'
+  'low quality, lowres, blurry, soft focus, out of focus, distorted, deformed, bad anatomy, bad hands, extra fingers, extra limbs, duplicate, cropped, watermark, text, logo, oversmoothed, washed out, muddy details, jpeg artifacts'
 
 const DEFAULT_IMAGE_STYLE_PROMPT =
-  'best quality, highly detailed, cinematic lighting, sharp focus, realistic composition, clean anatomy, coherent subject, readable background'
+  'best quality, highly detailed, crisp focus, cinematic lighting, realistic composition, clean anatomy, coherent subject, readable background, natural textures, well-defined edges'
 
 const DEFAULT_REPLICATE_MODEL = 'black-forest-labs/flux-schnell'
+const POLLINATIONS_BASE_URL = 'https://image.pollinations.ai/prompt'
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+const ALLOWED_CLIENT_IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const ALLOWED_REPLICATE_IMAGE_HOSTS = ['replicate.delivery', '.replicate.delivery']
 
 const IMAGE_PROMPT_SYSTEM =
-  'Rewrite the user image request into one concise English prompt for an image model. Preserve the core request exactly: subject, action, scene, camera angle, mood, clothing, colors, and composition when they are explicitly stated. Translate Estonian or mixed-language requests into natural English. Do not add unrelated objects, story details, or style changes that were not requested. If something is vague, keep it simple instead of inventing extra content. Return only the final English prompt, no quotes, no labels, no markdown.'
+  'Rewrite the user image request into one concise English prompt for an image model. Preserve the core request exactly: subject, action, scene, camera angle, mood, clothing, colors, material details, lens/framing, and composition when they are explicitly stated. Translate Estonian or mixed-language requests into natural English. Prioritize clarity, sharpness, subject separation, and accurate anatomy without adding unrelated objects, story details, or style changes that were not requested. If something is vague, keep it simple instead of inventing extra content. Return only the final English prompt, no quotes, no labels, no markdown.'
 
 type ComfyImage = {
   filename: string
@@ -51,23 +65,110 @@ function parseDataUrl(input: string) {
   }
 }
 
-async function readImageBuffer(imageSource: string, signal?: AbortSignal) {
-  const dataUrl = parseDataUrl(imageSource)
+function normalizeImageContentType(contentType: string) {
+  const normalized = contentType.trim().toLowerCase()
 
-  if (dataUrl) {
-    return dataUrl.buffer
+  if (normalized === 'image/jpg') {
+    return 'image/jpeg'
   }
 
-  const response = await fetch(imageSource, {
+  return normalized
+}
+
+function assertSupportedClientImage(fieldName: string, imageSource: string) {
+  const dataUrl = parseDataUrl(imageSource)
+
+  if (!dataUrl) {
+    throw new Error(`${fieldName} peab olema base64 data URL kujul data:image/...;base64,...`)
+  }
+
+  const contentType = normalizeImageContentType(dataUrl.contentType)
+
+  if (!ALLOWED_CLIENT_IMAGE_CONTENT_TYPES.has(contentType)) {
+    throw new Error(`${fieldName} peab olema PNG, JPEG või WebP pilt.`)
+  }
+
+  if (dataUrl.buffer.byteLength === 0) {
+    throw new Error(`${fieldName} on tühi või vigane.`)
+  }
+
+  if (dataUrl.buffer.byteLength > MAX_IMAGE_BYTES) {
+    throw new Error(`${fieldName} on liiga suur. Maksimaalne lubatud suurus on 20 MB.`)
+  }
+
+  return {
+    contentType,
+    buffer: dataUrl.buffer,
+  }
+}
+
+function readClientImageBuffer(fieldName: string, imageSource: string) {
+  return assertSupportedClientImage(fieldName, imageSource).buffer
+}
+
+function isAllowedRemoteHost(hostname: string, allowedHosts: string[]) {
+  const normalizedHostname = hostname.toLowerCase()
+
+  return allowedHosts.some((allowedHost) => {
+    const normalizedAllowedHost = allowedHost.toLowerCase()
+
+    if (normalizedAllowedHost.startsWith('.')) {
+      return normalizedHostname.endsWith(normalizedAllowedHost)
+    }
+
+    return normalizedHostname === normalizedAllowedHost
+  })
+}
+
+async function fetchTrustedRemoteImageAsDataUrl(
+  imageUrl: string,
+  signal: AbortSignal,
+  allowedHosts: string[]
+) {
+  let parsedUrl: URL
+
+  try {
+    parsedUrl = new URL(imageUrl)
+  } catch {
+    throw new Error('Pildi kaug-URL on vigane.')
+  }
+
+  if (parsedUrl.protocol !== 'https:') {
+    throw new Error('Pildi kaug-URL peab kasutama HTTPS-i.')
+  }
+
+  if (!isAllowedRemoteHost(parsedUrl.hostname, allowedHosts)) {
+    throw new Error('Pildi kaug-host ei ole lubatud.')
+  }
+
+  const response = await fetch(parsedUrl, {
     signal,
     cache: 'no-store',
   })
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch generated image for upscale: ${response.status}.`)
+    throw new Error(`Trusted image fetch failed: ${response.status}.`)
   }
 
-  return Buffer.from(await response.arrayBuffer())
+  const contentType = normalizeImageContentType(
+    response.headers.get('content-type') || 'image/png'
+  )
+
+  if (!ALLOWED_CLIENT_IMAGE_CONTENT_TYPES.has(contentType)) {
+    throw new Error('Trusted image fetch returned an unsupported content type.')
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer())
+
+  if (buffer.byteLength === 0) {
+    throw new Error('Trusted image fetch returned an empty image.')
+  }
+
+  if (buffer.byteLength > MAX_IMAGE_BYTES) {
+    throw new Error('Trusted image fetch returned an image that is too large.')
+  }
+
+  return `data:${contentType};base64,${buffer.toString('base64')}`
 }
 
 async function upscaleGeneratedImage(
@@ -79,7 +180,7 @@ async function upscaleGeneratedImage(
     return imageSource
   }
 
-  const sourceBuffer = await readImageBuffer(imageSource, signal)
+  const sourceBuffer = readClientImageBuffer('imageDataUrl', imageSource)
   const metadata = await sharp(sourceBuffer).metadata()
 
   if (!metadata.width || !metadata.height) {
@@ -102,16 +203,41 @@ async function upscaleGeneratedImage(
   return `data:image/png;base64,${upscaledBuffer.toString('base64')}`
 }
 
-function getComfyHeaders() {
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  }
+async function prepareReferenceImageBase64(
+  imageSource: string,
+  width: number,
+  height: number,
+  signal?: AbortSignal
+) {
+  const sourceBuffer = readClientImageBuffer('referenceImageDataUrl', imageSource)
+
+  return sharp(sourceBuffer)
+    .resize({
+      width,
+      height,
+      fit: 'cover',
+      kernel: sharp.kernel.lanczos3,
+    })
+    .png()
+    .toBuffer()
+    .then((buffer) => buffer.toString('base64'))
+}
+
+function getComfyAuthHeaders() {
+  const headers: HeadersInit = {}
 
   if (process.env.COMFYUI_API_KEY) {
     headers.Authorization = `Bearer ${process.env.COMFYUI_API_KEY}`
   }
 
   return headers
+}
+
+function getComfyJsonHeaders() {
+  return {
+    ...getComfyAuthHeaders(),
+    'Content-Type': 'application/json',
+  }
 }
 
 function getNumericEnv(name: string, fallback: number) {
@@ -125,9 +251,58 @@ function getNumericEnv(name: string, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function getComfyEffectiveSettings(
+  pipeline: ReturnType<typeof getImagePipeline>,
+  aspectRatioId?: string,
+  referenceImageMode?: boolean
+) {
+  const baseDimensions = getDimensionsForAspectRatio(
+    getNumericEnv('COMFYUI_WIDTH', pipeline.comfy.width),
+    getNumericEnv('COMFYUI_HEIGHT', pipeline.comfy.height),
+    aspectRatioId
+  )
+
+  const tunnelMode = (process.env.COMFYUI_BASE_URL || '').includes('trycloudflare.com')
+
+  if (!referenceImageMode) {
+    return {
+      dimensions: baseDimensions,
+      steps: getNumericEnv('COMFYUI_STEPS', pipeline.comfy.steps),
+      cfg: getNumericEnv('COMFYUI_CFG', pipeline.comfy.cfg),
+      samplerName: process.env.COMFYUI_SAMPLER || pipeline.comfy.sampler,
+      scheduler: process.env.COMFYUI_SCHEDULER || pipeline.comfy.scheduler,
+    }
+  }
+
+  const longestEdge = tunnelMode ? 320 : 512
+  const ratio = baseDimensions.width / Math.max(1, baseDimensions.height)
+  const width = ratio >= 1 ? longestEdge : Math.round(longestEdge * ratio)
+  const height = ratio >= 1 ? Math.round(longestEdge / ratio) : longestEdge
+
+  return {
+    dimensions: {
+      width: Math.max(256, Math.round(width / 64) * 64),
+      height: Math.max(256, Math.round(height / 64) * 64),
+    },
+    steps: getNumericEnv('COMFYUI_IMG2IMG_STEPS', Math.min(pipeline.comfy.steps, tunnelMode ? 4 : 10)),
+    cfg: getNumericEnv('COMFYUI_IMG2IMG_CFG', Math.min(pipeline.comfy.cfg, tunnelMode ? 3 : 4)),
+    samplerName: process.env.COMFYUI_IMG2IMG_SAMPLER || 'euler',
+    scheduler: process.env.COMFYUI_IMG2IMG_SCHEDULER || 'normal',
+  }
+}
+
+function isComfyTunnelMode() {
+  return (process.env.COMFYUI_BASE_URL || '').includes('trycloudflare.com')
+}
+
 function buildWorkflow(
   prompt: string,
-  pipeline: ReturnType<typeof getImagePipeline>
+  pipeline: ReturnType<typeof getImagePipeline>,
+  aspectRatioId?: string,
+  seed?: number,
+  negativePrompt?: string,
+  referenceImageName?: string,
+  denoisingStrength?: number
 ) {
   const checkpoint = process.env.COMFYUI_CHECKPOINT_NAME
 
@@ -135,28 +310,27 @@ function buildWorkflow(
     throw new Error('COMFYUI_CHECKPOINT_NAME is missing.')
   }
 
-  const width = getNumericEnv('COMFYUI_WIDTH', pipeline.comfy.width)
-  const height = getNumericEnv('COMFYUI_HEIGHT', pipeline.comfy.height)
-  const steps = getNumericEnv('COMFYUI_STEPS', pipeline.comfy.steps)
-  const cfg = getNumericEnv('COMFYUI_CFG', pipeline.comfy.cfg)
-  const samplerName = process.env.COMFYUI_SAMPLER || pipeline.comfy.sampler
-  const scheduler = process.env.COMFYUI_SCHEDULER || pipeline.comfy.scheduler
-  const negativePrompt =
-    process.env.COMFYUI_NEGATIVE_PROMPT || DEFAULT_NEGATIVE_PROMPT
+  const effectiveSettings = getComfyEffectiveSettings(
+    pipeline,
+    aspectRatioId,
+    Boolean(referenceImageName)
+  )
+  const resolvedNegativePrompt =
+    negativePrompt || process.env.COMFYUI_NEGATIVE_PROMPT || DEFAULT_NEGATIVE_PROMPT
 
-  return {
+  const workflow: Record<string, unknown> = {
     '3': {
       inputs: {
-        seed: Math.floor(Math.random() * 1_000_000_000),
-        steps,
-        cfg,
-        sampler_name: samplerName,
-        scheduler,
-        denoise: 1,
+        seed: seed ?? Math.floor(Math.random() * 1_000_000_000),
+        steps: effectiveSettings.steps,
+        cfg: effectiveSettings.cfg,
+        sampler_name: effectiveSettings.samplerName,
+        scheduler: effectiveSettings.scheduler,
+        denoise: referenceImageName ? denoisingStrength ?? 0.45 : 1,
         model: ['4', 0],
         positive: ['6', 0],
         negative: ['7', 0],
-        latent_image: ['5', 0],
+        latent_image: referenceImageName ? ['10', 0] : ['5', 0],
       },
       class_type: 'KSampler',
     },
@@ -165,14 +339,6 @@ function buildWorkflow(
         ckpt_name: checkpoint,
       },
       class_type: 'CheckpointLoaderSimple',
-    },
-    '5': {
-      inputs: {
-        width,
-        height,
-        batch_size: 1,
-      },
-      class_type: 'EmptyLatentImage',
     },
     '6': {
       inputs: {
@@ -183,7 +349,7 @@ function buildWorkflow(
     },
     '7': {
       inputs: {
-        text: negativePrompt,
+        text: resolvedNegativePrompt,
         clip: ['4', 1],
       },
       class_type: 'CLIPTextEncode',
@@ -203,6 +369,33 @@ function buildWorkflow(
       class_type: 'SaveImage',
     },
   }
+
+  if (referenceImageName) {
+    workflow['10'] = {
+      inputs: {
+        pixels: ['11', 0],
+        vae: ['4', 2],
+      },
+      class_type: 'VAEEncode',
+    }
+    workflow['11'] = {
+      inputs: {
+        image: referenceImageName,
+      },
+      class_type: 'LoadImage',
+    }
+  } else {
+    workflow['5'] = {
+      inputs: {
+        width: effectiveSettings.dimensions.width,
+        height: effectiveSettings.dimensions.height,
+        batch_size: 1,
+      },
+      class_type: 'EmptyLatentImage',
+    }
+  }
+
+  return workflow
 }
 
 function getFirstImage(historyEntry: any): ComfyImage | null {
@@ -232,16 +425,42 @@ function createBackendSignal(signal: AbortSignal, timeoutMs: number) {
 
 function buildFallbackImagePrompt(
   prompt: string,
-  pipeline: ReturnType<typeof getImagePipeline>
+  pipeline: ReturnType<typeof getImagePipeline>,
+  stylePresetId?: string
 ) {
-  return `${prompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}, ${pipeline.promptStyle}`
+  const stylePreset = getImageStylePreset(stylePresetId)
+  return `${prompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}, ${pipeline.promptStyle}, ${stylePreset.promptStyle}`
+}
+
+function buildNegativePrompt(stylePresetId?: string) {
+  const stylePreset = getImageStylePreset(stylePresetId)
+  return `${DEFAULT_NEGATIVE_PROMPT}, ${stylePreset.negativePrompt}`
+}
+
+function resolveImageSeed(seed?: number | null, variationStrength?: number) {
+  const baseSeed =
+    typeof seed === 'number' && Number.isFinite(seed)
+      ? Math.max(0, Math.floor(seed))
+      : Math.floor(Math.random() * 1_000_000_000)
+
+  const normalizedVariation = Math.max(0, Math.min(100, variationStrength ?? 0))
+
+  if (normalizedVariation === 0) {
+    return baseSeed
+  }
+
+  const maxOffset = Math.max(1, Math.round((normalizedVariation / 100) * 250_000))
+  const offset = Math.floor((Math.random() * 2 - 1) * maxOffset)
+
+  return Math.max(0, baseSeed + offset)
 }
 
 async function optimizeImagePrompt(
   prompt: string,
   signal: AbortSignal,
   pipeline: ReturnType<typeof getImagePipeline>,
-  enhancePrompt: boolean
+  enhancePrompt: boolean,
+  stylePresetId?: string
 ) {
   const cleanedPrompt = prompt.trim()
 
@@ -250,11 +469,11 @@ async function optimizeImagePrompt(
   }
 
   if (!enhancePrompt) {
-    return buildFallbackImagePrompt(cleanedPrompt, pipeline)
+    return buildFallbackImagePrompt(cleanedPrompt, pipeline, stylePresetId)
   }
 
   if (!process.env.GROQ_API_KEY) {
-    return buildFallbackImagePrompt(cleanedPrompt, pipeline)
+    return buildFallbackImagePrompt(cleanedPrompt, pipeline, stylePresetId)
   }
 
   try {
@@ -269,12 +488,12 @@ async function optimizeImagePrompt(
     const optimizedPrompt = result.text.trim().replace(/^"|"$/g, '')
 
     if (!optimizedPrompt) {
-      return buildFallbackImagePrompt(cleanedPrompt, pipeline)
+      return buildFallbackImagePrompt(cleanedPrompt, pipeline, stylePresetId)
     }
 
-    return `${optimizedPrompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}, ${pipeline.promptStyle}`
+    return buildFallbackImagePrompt(optimizedPrompt, pipeline, stylePresetId)
   } catch {
-    return buildFallbackImagePrompt(cleanedPrompt, pipeline)
+    return buildFallbackImagePrompt(cleanedPrompt, pipeline, stylePresetId)
   }
 }
 
@@ -290,9 +509,7 @@ async function fetchComfyImageDataUrl(
   })
 
   const imageResponse = await fetch(`${baseUrl}/view?${params.toString()}`, {
-    headers: process.env.COMFYUI_API_KEY
-      ? { Authorization: `Bearer ${process.env.COMFYUI_API_KEY}` }
-      : undefined,
+    headers: process.env.COMFYUI_API_KEY ? getComfyAuthHeaders() : undefined,
     signal,
     cache: 'no-store',
   })
@@ -339,7 +556,7 @@ async function getComfyJobStatus(
   }
 
   const historyResponse = await fetch(`${baseUrl}/history/${promptId}`, {
-    headers: getComfyHeaders(),
+    headers: getComfyJsonHeaders(),
     signal,
     cache: 'no-store',
   })
@@ -371,7 +588,7 @@ async function getComfyJobStatus(
   }
 
   const queueResponse = await fetch(`${baseUrl}/queue`, {
-    headers: getComfyHeaders(),
+    headers: getComfyJsonHeaders(),
     signal,
     cache: 'no-store',
   })
@@ -403,7 +620,12 @@ async function getComfyJobStatus(
 async function queueComfyUIImage(
   prompt: string,
   signal: AbortSignal,
-  pipeline: ReturnType<typeof getImagePipeline>
+  pipeline: ReturnType<typeof getImagePipeline>,
+  aspectRatioId?: string,
+  seed?: number,
+  negativePrompt?: string,
+  referenceImageDataUrl?: string,
+  imageToImageStrength?: number
 ) {
   const baseUrl = process.env.COMFYUI_BASE_URL?.replace(/\/$/, '')
 
@@ -411,10 +633,66 @@ async function queueComfyUIImage(
     return null
   }
 
+  const denoisingStrength = Math.max(
+    0.05,
+    Math.min(1, (imageToImageStrength ?? 45) / 100)
+  )
+
+  let referenceImageName: string | undefined
+
+  if (referenceImageDataUrl) {
+    const effectiveSettings = getComfyEffectiveSettings(pipeline, aspectRatioId, true)
+    const referenceImageBase64 = await prepareReferenceImageBase64(
+      referenceImageDataUrl,
+      effectiveSettings.dimensions.width,
+      effectiveSettings.dimensions.height,
+      signal
+    )
+    const referenceBuffer = Buffer.from(referenceImageBase64, 'base64')
+    const formData = new FormData()
+    const filename = `valdo-reference-${crypto.randomUUID()}.png`
+
+    formData.append('image', new File([referenceBuffer], filename, { type: 'image/png' }))
+    formData.append('type', 'input')
+    formData.append('overwrite', 'false')
+
+    const uploadResponse = await fetch(`${baseUrl}/upload/image`, {
+      method: 'POST',
+      headers: getComfyAuthHeaders(),
+      body: formData,
+      signal,
+    })
+
+    if (!uploadResponse.ok) {
+      throw new Error(`ComfyUI image upload failed with status ${uploadResponse.status}.`)
+    }
+
+    const uploadResult = (await uploadResponse.json()) as {
+      name?: string
+      subfolder?: string
+    }
+
+    if (!uploadResult.name) {
+      throw new Error('ComfyUI image upload did not return a filename.')
+    }
+
+    referenceImageName = uploadResult.subfolder
+      ? `${uploadResult.subfolder}/${uploadResult.name}`
+      : uploadResult.name
+  }
+
   let workflow: Record<string, unknown>
 
   try {
-    workflow = buildWorkflow(prompt.trim(), pipeline)
+    workflow = buildWorkflow(
+      prompt.trim(),
+      pipeline,
+      aspectRatioId,
+      seed,
+      negativePrompt,
+      referenceImageName,
+      denoisingStrength
+    )
   } catch (error) {
     throw new Error(
       error instanceof Error ? error.message : 'Failed to build ComfyUI workflow.'
@@ -424,7 +702,7 @@ async function queueComfyUIImage(
   const clientId = crypto.randomUUID()
   const promptResponse = await fetch(`${baseUrl}/prompt`, {
     method: 'POST',
-    headers: getComfyHeaders(),
+    headers: getComfyJsonHeaders(),
     body: JSON.stringify({ prompt: workflow, client_id: clientId }),
     signal,
   })
@@ -495,10 +773,62 @@ function formatAutomatic1111Error(errorText: string) {
   return `Automatic1111 error: ${errorText}`
 }
 
+async function createPollinationsImage(
+  prompt: string,
+  signal: AbortSignal,
+  pipeline: ReturnType<typeof getImagePipeline>,
+  aspectRatioId?: string,
+  seed?: number
+) {
+  const dimensions = getDimensionsForAspectRatio(
+    Math.min(1024, Math.max(256, pipeline.comfy.width)),
+    Math.min(1024, Math.max(256, pipeline.comfy.height)),
+    aspectRatioId
+  )
+
+  const params = new URLSearchParams({
+    width: String(dimensions.width),
+    height: String(dimensions.height),
+    seed: String(seed ?? Math.floor(Math.random() * 1_000_000_000)),
+    model: 'flux',
+    nologo: 'true',
+    private: 'true',
+    enhance: 'false',
+    safe: 'false',
+  })
+
+  const response = await fetch(
+    `${POLLINATIONS_BASE_URL}/${encodeURIComponent(prompt)}?${params.toString()}`,
+    {
+      signal,
+      cache: 'no-store',
+    }
+  )
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Pollinations error: ${errorText || response.status}`)
+  }
+
+  const contentType = response.headers.get('content-type') || 'image/jpeg'
+  const buffer = Buffer.from(await response.arrayBuffer())
+
+  if (buffer.byteLength === 0) {
+    throw new Error('Pollinations did not return image bytes.')
+  }
+
+  return `data:${contentType};base64,${buffer.toString('base64')}`
+}
+
 async function createAutomatic1111Image(
   prompt: string,
   signal: AbortSignal,
-  pipeline: ReturnType<typeof getImagePipeline>
+  pipeline: ReturnType<typeof getImagePipeline>,
+  aspectRatioId?: string,
+  seed?: number,
+  negativePrompt?: string,
+  referenceImageDataUrl?: string,
+  imageToImageStrength?: number
 ) {
   const baseUrl = process.env.AUTOMATIC1111_BASE_URL?.replace(/\/$/, '')
 
@@ -506,24 +836,52 @@ async function createAutomatic1111Image(
     return null
   }
 
-  const response = await fetch(`${baseUrl}/sdapi/v1/txt2img`, {
+  const dimensions = getDimensionsForAspectRatio(
+    getNumericEnv('AUTOMATIC1111_WIDTH', pipeline.comfy.width),
+    getNumericEnv('AUTOMATIC1111_HEIGHT', pipeline.comfy.height),
+    aspectRatioId
+  )
+
+  const denoisingStrength = Math.max(
+    0.05,
+    Math.min(1, (imageToImageStrength ?? 45) / 100)
+  )
+  const endpoint = referenceImageDataUrl ? '/sdapi/v1/img2img' : '/sdapi/v1/txt2img'
+  const payload: Record<string, unknown> = {
+    prompt,
+    negative_prompt:
+      negativePrompt || process.env.AUTOMATIC1111_NEGATIVE_PROMPT || DEFAULT_NEGATIVE_PROMPT,
+    width: dimensions.width,
+    height: dimensions.height,
+    steps: getNumericEnv('AUTOMATIC1111_STEPS', pipeline.comfy.steps),
+    cfg_scale: getNumericEnv('AUTOMATIC1111_CFG', pipeline.comfy.cfg),
+    sampler_name: process.env.AUTOMATIC1111_SAMPLER || pipeline.comfy.sampler,
+    seed: seed ?? -1,
+    batch_size: 1,
+    n_iter: 1,
+    send_images: true,
+    save_images: false,
+  }
+
+  if (referenceImageDataUrl) {
+    payload.init_images = [
+      await prepareReferenceImageBase64(
+        referenceImageDataUrl,
+        dimensions.width,
+        dimensions.height,
+        signal
+      ),
+    ]
+    payload.denoising_strength = denoisingStrength
+    payload.resize_mode = 0
+  }
+
+  const response = await fetch(`${baseUrl}${endpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      prompt,
-      negative_prompt: process.env.AUTOMATIC1111_NEGATIVE_PROMPT || DEFAULT_NEGATIVE_PROMPT,
-      width: getNumericEnv('AUTOMATIC1111_WIDTH', pipeline.comfy.width),
-      height: getNumericEnv('AUTOMATIC1111_HEIGHT', pipeline.comfy.height),
-      steps: getNumericEnv('AUTOMATIC1111_STEPS', pipeline.comfy.steps),
-      cfg_scale: getNumericEnv('AUTOMATIC1111_CFG', pipeline.comfy.cfg),
-      sampler_name: process.env.AUTOMATIC1111_SAMPLER || pipeline.comfy.sampler,
-      batch_size: 1,
-      n_iter: 1,
-      send_images: true,
-      save_images: false,
-    }),
+    body: JSON.stringify(payload),
     signal,
   })
 
@@ -545,7 +903,9 @@ async function createAutomatic1111Image(
 async function createReplicateImage(
   prompt: string,
   signal: AbortSignal,
-  pipeline: ReturnType<typeof getImagePipeline>
+  pipeline: ReturnType<typeof getImagePipeline>,
+  aspectRatioId?: string,
+  seed?: number
 ) {
   const token = process.env.REPLICATE_API_TOKEN
 
@@ -573,7 +933,8 @@ async function createReplicateImage(
         input: {
           prompt,
           aspect_ratio:
-            process.env.REPLICATE_ASPECT_RATIO || pipeline.replicate.aspectRatio,
+            process.env.REPLICATE_ASPECT_RATIO || aspectRatioId || pipeline.replicate.aspectRatio,
+          seed,
           output_format: process.env.REPLICATE_OUTPUT_FORMAT || 'png',
           output_quality: getNumericEnv(
             'REPLICATE_OUTPUT_QUALITY',
@@ -602,8 +963,19 @@ async function createReplicateImage(
   for (let attempt = 0; attempt < 20; attempt++) {
     if (prediction.status === 'succeeded') {
       const output = prediction.output
-      if (Array.isArray(output) && output[0]) return output[0]
-      if (typeof output === 'string') return output
+
+      if (Array.isArray(output) && output[0]) {
+        return output[0].startsWith('data:')
+          ? output[0]
+          : fetchTrustedRemoteImageAsDataUrl(output[0], signal, ALLOWED_REPLICATE_IMAGE_HOSTS)
+      }
+
+      if (typeof output === 'string') {
+        return output.startsWith('data:')
+          ? output
+          : fetchTrustedRemoteImageAsDataUrl(output, signal, ALLOWED_REPLICATE_IMAGE_HOSTS)
+      }
+
       break
     }
 
@@ -697,21 +1069,43 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const body = await req.json()
+  let body: {
+    action?: 'generate' | 'upscale'
+    prompt?: string
+    providerId?: string
+    pipelineId?: string
+    aspectRatioId?: string
+    stylePresetId?: string
+    seed?: number | null
+    variationStrength?: number
+    enhancePrompt?: boolean
+    imageDataUrl?: string
+    referenceImageDataUrl?: string
+    imageToImageStrength?: number
+  }
+
+  try {
+    body = await parseJsonBody(req, imageRequestSchema, {
+      maxBytes: 28 * 1024 * 1024,
+      emptyBodyMessage: 'Pildi body puudub.',
+    })
+  } catch (error) {
+    return createValidationErrorResponse(error, 'Pildi parsimine ebaõnnestus.')
+  }
+
   const {
     action,
     prompt,
     providerId,
     pipelineId,
+    aspectRatioId,
+    stylePresetId,
+    seed,
+    variationStrength,
     enhancePrompt,
     imageDataUrl,
-  }: {
-    action?: 'generate' | 'upscale'
-    prompt?: string
-    providerId?: string
-    pipelineId?: string
-    enhancePrompt?: boolean
-    imageDataUrl?: string
+    referenceImageDataUrl,
+    imageToImageStrength,
   } = body
 
   if (action === 'upscale') {
@@ -723,6 +1117,7 @@ export async function POST(req: Request) {
     }
 
     try {
+      assertSupportedClientImage('imageDataUrl', imageDataUrl)
       const selectedPipeline = getImagePipeline(pipelineId)
       const upscaledImage = await upscaleGeneratedImage(
         imageDataUrl,
@@ -752,47 +1147,82 @@ export async function POST(req: Request) {
     }
   }
 
-  if (!prompt?.trim()) {
-    return new Response(JSON.stringify({ error: 'Prompt is required.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    })
-  }
-
   try {
     const selectedProvider = getImageProvider(providerId)
     const selectedPipeline = getImagePipeline(pipelineId)
     const shouldEnhance = enhancePrompt !== false
-    const trimmedPrompt = prompt.trim()
+    const trimmedPrompt = prompt?.trim() || ''
+    const resolvedSeed = resolveImageSeed(seed, variationStrength)
+    const negativePrompt = buildNegativePrompt(stylePresetId)
+    const hasReferenceImage = Boolean(referenceImageDataUrl?.trim())
+
+    if (referenceImageDataUrl) {
+      assertSupportedClientImage('referenceImageDataUrl', referenceImageDataUrl)
+    }
+
+    const useFastComfyReferenceMode =
+      hasReferenceImage &&
+      isComfyTunnelMode() &&
+      (selectedProvider.id === 'auto' || selectedProvider.id === 'comfyui')
+    const effectiveEnhancePrompt = useFastComfyReferenceMode ? false : shouldEnhance
     const optimizedPrompt = await optimizeImagePrompt(
       trimmedPrompt,
       req.signal,
       selectedPipeline,
-      shouldEnhance
+      effectiveEnhancePrompt,
+      stylePresetId
     )
     const hasAutomatic1111 = Boolean(process.env.AUTOMATIC1111_BASE_URL)
     const hasComfy = Boolean(process.env.COMFYUI_BASE_URL)
     const hasReplicate = Boolean(process.env.REPLICATE_API_TOKEN)
+    const hasPollinations = !hasReferenceImage
+
+    if (hasReferenceImage && selectedProvider.id === 'replicate') {
+      return new Response(
+        JSON.stringify({
+          error: 'Viitepildiga image-to-image on praegu toetatud Automatic1111 ja ComfyUI backendidega.',
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
 
     let imageDataUrl: string | null = null
     let lastError: Error | null = null
     let resolvedProviderId: RuntimeImageProviderId | null = null
+    const autoProviderOrder = sortProvidersForAuto([
+      'automatic1111',
+      'pollinations',
+      'comfyui',
+      'replicate',
+    ])
     const providerOrder: RuntimeImageProviderId[] =
-      selectedProvider.id === 'auto'
-        ? sortProvidersForAuto(['automatic1111', 'comfyui', 'replicate'])
+      hasReferenceImage
+        ? selectedProvider.id === 'auto'
+          ? sortProvidersForAuto(['automatic1111', 'comfyui'])
+          : [selectedProvider.id as RuntimeImageProviderId]
+        : selectedProvider.id === 'auto'
+        ? autoProviderOrder
         : [selectedProvider.id as RuntimeImageProviderId]
 
     for (const candidateProvider of providerOrder) {
       const isConfigured =
         (candidateProvider === 'automatic1111' && hasAutomatic1111) ||
         (candidateProvider === 'comfyui' && hasComfy) ||
-        (candidateProvider === 'replicate' && hasReplicate)
+        (candidateProvider === 'replicate' && hasReplicate) ||
+        (candidateProvider === 'pollinations' && hasPollinations)
 
       if (!isConfigured) {
         continue
       }
 
-      if (selectedProvider.id === 'auto' && isBackendCoolingDown(candidateProvider)) {
+      if (
+        selectedProvider.id === 'auto' &&
+        !hasReferenceImage &&
+        isBackendCoolingDown(candidateProvider)
+      ) {
         continue
       }
 
@@ -801,7 +1231,12 @@ export async function POST(req: Request) {
           imageDataUrl = await createAutomatic1111Image(
             optimizedPrompt,
             createBackendSignal(req.signal, 90000),
-            selectedPipeline
+            selectedPipeline,
+            aspectRatioId,
+            resolvedSeed,
+            negativePrompt,
+            referenceImageDataUrl,
+            imageToImageStrength
           )
           recordBackendSuccess('automatic1111')
           resolvedProviderId = 'automatic1111'
@@ -812,7 +1247,12 @@ export async function POST(req: Request) {
           const queuedJob = await queueComfyUIImage(
             optimizedPrompt,
             createBackendSignal(req.signal, 15000),
-            selectedPipeline
+            selectedPipeline,
+            aspectRatioId,
+            resolvedSeed,
+            negativePrompt,
+            referenceImageDataUrl,
+            imageToImageStrength
           )
 
           if (!queuedJob) {
@@ -825,8 +1265,9 @@ export async function POST(req: Request) {
             JSON.stringify({
               status: 'queued',
               promptId: queuedJob.promptId,
-              shouldUpscale: shouldEnhance,
+              shouldUpscale: useFastComfyReferenceMode ? false : shouldEnhance,
               provider: 'comfyui',
+              usedSeed: resolvedSeed,
             }),
             {
               status: 202,
@@ -835,10 +1276,25 @@ export async function POST(req: Request) {
           )
         }
 
+        if (candidateProvider === 'pollinations') {
+          imageDataUrl = await createPollinationsImage(
+            optimizedPrompt,
+            createBackendSignal(req.signal, 45000),
+            selectedPipeline,
+            aspectRatioId,
+            resolvedSeed
+          )
+          recordBackendSuccess('pollinations')
+          resolvedProviderId = 'pollinations'
+          break
+        }
+
         imageDataUrl = await createReplicateImage(
           optimizedPrompt,
           createBackendSignal(req.signal, 90000),
-          selectedPipeline
+          selectedPipeline,
+          aspectRatioId,
+          resolvedSeed
         )
         recordBackendSuccess('replicate')
         resolvedProviderId = 'replicate'
@@ -853,7 +1309,11 @@ export async function POST(req: Request) {
     }
 
     if (!imageDataUrl && !lastError) {
-      lastError = new Error('No image backend is configured for the selected provider.')
+      lastError = new Error(
+        hasReferenceImage
+          ? 'Viitepildiga image-to-image jaoks peab olema seadistatud Automatic1111 või ComfyUI backend.'
+          : 'No image backend is configured for the selected provider.'
+      )
     }
 
     if (!imageDataUrl) {
@@ -875,7 +1335,8 @@ export async function POST(req: Request) {
         imageDataUrl,
         provider: resolvedProviderId || selectedProvider.id,
         pipeline: selectedPipeline.id,
-        shouldUpscale: shouldEnhance,
+        shouldUpscale: useFastComfyReferenceMode ? false : shouldEnhance,
+        usedSeed: resolvedSeed,
       }),
       {
         headers: { 'Content-Type': 'application/json' },

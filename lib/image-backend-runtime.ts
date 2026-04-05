@@ -1,4 +1,4 @@
-export type RuntimeImageProviderId = 'automatic1111' | 'comfyui' | 'replicate'
+export type RuntimeImageProviderId = 'automatic1111' | 'comfyui' | 'replicate' | 'pollinations'
 
 type BackendRuntimeState = {
   score: number
@@ -33,6 +33,14 @@ const backendRuntimeState: Record<RuntimeImageProviderId, BackendRuntimeState> =
     lastError: null,
   },
   replicate: {
+    score: INITIAL_SCORE,
+    consecutiveFailures: 0,
+    cooldownUntil: 0,
+    lastFailureAt: null,
+    lastSuccessAt: null,
+    lastError: null,
+  },
+  pollinations: {
     score: INITIAL_SCORE,
     consecutiveFailures: 0,
     cooldownUntil: 0,

@@ -1,16 +1,22 @@
 'use client'
 
 import {
+  DEFAULT_IMAGE_ASPECT_RATIO_ID,
   DEFAULT_IMAGE_PIPELINE_ID,
   DEFAULT_IMAGE_PROVIDER_ID,
   DEFAULT_PROMPT_PROFILE_ID,
   DEFAULT_TEXT_MODEL_ID,
+  DEFAULT_IMAGE_STYLE_PRESET_ID,
+  IMAGE_ASPECT_RATIOS,
   IMAGE_PIPELINES,
   IMAGE_PROVIDERS,
+  IMAGE_STYLE_PRESETS,
   PROMPT_PROFILES,
   TEXT_MODELS,
+  type ImageAspectRatioId,
   type ImagePipelineId,
   type ImageProviderId,
+  type ImageStylePresetId,
   type PromptProfileId,
   type TextModelId,
 } from '@/lib/ai-hub'
@@ -20,6 +26,10 @@ interface HubControlsProps {
   textModelId: TextModelId
   promptProfileId: PromptProfileId
   imageProviderId: ImageProviderId
+  imageAspectRatioId: ImageAspectRatioId
+  imageStylePresetId: ImageStylePresetId
+  imageSeed: number | null
+  imageVariationStrength: number
   imagePipelineId: ImagePipelineId
   enhancePrompt: boolean
   backendHealth?: {
@@ -30,6 +40,10 @@ interface HubControlsProps {
   onTextModelChange: (value: TextModelId) => void
   onPromptProfileChange: (value: PromptProfileId) => void
   onImageProviderChange: (value: ImageProviderId) => void
+  onImageAspectRatioChange: (value: ImageAspectRatioId) => void
+  onImageStylePresetChange: (value: ImageStylePresetId) => void
+  onImageSeedChange: (value: number | null) => void
+  onImageVariationStrengthChange: (value: number) => void
   onImagePipelineChange: (value: ImagePipelineId) => void
   onEnhancePromptChange: (value: boolean) => void
 }
@@ -42,12 +56,20 @@ export function HubControls({
   textModelId,
   promptProfileId,
   imageProviderId,
+  imageAspectRatioId,
+  imageStylePresetId,
+  imageSeed,
+  imageVariationStrength,
   imagePipelineId,
   enhancePrompt,
   backendHealth,
   onTextModelChange,
   onPromptProfileChange,
   onImageProviderChange,
+  onImageAspectRatioChange,
+  onImageStylePresetChange,
+  onImageSeedChange,
+  onImageVariationStrengthChange,
   onImagePipelineChange,
   onEnhancePromptChange,
 }: HubControlsProps) {
@@ -91,6 +113,18 @@ export function HubControls({
     : PROMPT_PROFILES.find((profile) => profile.id === promptProfileId)?.description ||
       PROMPT_PROFILES.find((profile) => profile.id === DEFAULT_PROMPT_PROFILE_ID)?.description
 
+  const tertiaryDescription = isImageMode
+    ? IMAGE_ASPECT_RATIOS.find((aspectRatio) => aspectRatio.id === imageAspectRatioId)
+        ?.description ||
+      IMAGE_ASPECT_RATIOS.find((aspectRatio) => aspectRatio.id === DEFAULT_IMAGE_ASPECT_RATIO_ID)
+        ?.description
+    : null
+
+  const quaternaryDescription = isImageMode
+    ? IMAGE_STYLE_PRESETS.find((preset) => preset.id === imageStylePresetId)?.description ||
+      IMAGE_STYLE_PRESETS.find((preset) => preset.id === DEFAULT_IMAGE_STYLE_PRESET_ID)?.description
+    : null
+
   return (
     <div className="grid gap-1.5 rounded-xl border border-border/50 bg-card/20 p-2 sm:grid-cols-2">
       {isImageMode ? (
@@ -127,6 +161,84 @@ export function HubControls({
                 </option>
               ))}
             </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Kuvasuhe
+            </span>
+            <select
+              value={imageAspectRatioId}
+              onChange={(event) =>
+                onImageAspectRatioChange(event.target.value as ImageAspectRatioId)
+              }
+              className={baseSelectClassName}
+            >
+              {IMAGE_ASPECT_RATIOS.map((aspectRatio) => (
+                <option key={aspectRatio.id} value={aspectRatio.id}>
+                  {aspectRatio.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Stiil
+            </span>
+            <select
+              value={imageStylePresetId}
+              onChange={(event) =>
+                onImageStylePresetChange(event.target.value as ImageStylePresetId)
+              }
+              className={baseSelectClassName}
+            >
+              {IMAGE_STYLE_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Seed
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={imageSeed ?? ''}
+              onChange={(event) => {
+                const value = event.target.value.trim()
+                onImageSeedChange(value ? Number(value) : null)
+              }}
+              placeholder="Juhuslik"
+              className={baseSelectClassName}
+            />
+          </label>
+
+          <label className="flex flex-col gap-1 sm:col-span-2">
+            <span className="flex items-center justify-between text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              <span>Variatsioon</span>
+              <span>{imageVariationStrength}%</span>
+            </span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={imageVariationStrength}
+              onChange={(event) =>
+                onImageVariationStrengthChange(Number(event.target.value))
+              }
+              className="w-full accent-primary"
+            />
+            <span className="text-[11px] text-muted-foreground">
+              {imageSeed === null
+                ? 'Tuhja seediga kasutatakse iga kord uut juhuslikku alust.'
+                : 'Seadistatud seed hoiab kompositsiooni stabiilsemana; variatsioon lisab kontrollitud erinevust.'}
+            </span>
           </label>
 
           <button
@@ -186,6 +298,8 @@ export function HubControls({
 
       <div className="sm:col-span-2 rounded-lg bg-background/40 px-3 py-1.5 text-[11px] text-muted-foreground">
         {primaryDescription} {' · '} {secondaryDescription}
+        {tertiaryDescription ? ` · ${tertiaryDescription}` : ''}
+        {quaternaryDescription ? ` · ${quaternaryDescription}` : ''}
       </div>
     </div>
   )

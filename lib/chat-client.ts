@@ -55,11 +55,13 @@ export function sanitizeMessagesForChatModel(messages: UIMessage[]) {
 
 export function buildImageStatusText(
   prompt: string,
-  status: Exclude<ImageJobStatus, 'succeeded'>
+  status: Exclude<ImageJobStatus, 'succeeded'> | 'starting'
 ) {
   switch (status) {
+    case 'starting':
+      return `Saadan pildi loomise töötlusse: **${prompt}**`
     case 'queued':
-      return `Pildi loomine on järjekorras: **${prompt}**`
+      return `Pildi loomine valmistub: **${prompt}**`
     case 'running':
       return `Loon pilti promptist: **${prompt}**`
     case 'failed':

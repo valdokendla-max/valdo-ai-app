@@ -1,7 +1,13 @@
 import { groq } from '@ai-sdk/groq'
 import { convertToModelMessages, streamText, UIMessage } from 'ai'
 import { getPromptProfile, getTextModel } from '@/lib/ai-hub'
+import { getChatArtifactFormat, getChatOutputMode } from '@/lib/chat-output'
 import { knowledgeStore } from '@/lib/knowledge-store'
+import { chatRequestSchema } from '@/lib/server/api-schemas'
+import {
+  createValidationErrorResponse,
+  parseJsonBody,
+} from '@/lib/server/request-validation'
 
 export const maxDuration = 60
 
@@ -20,16 +26,50 @@ Hoia artifact-bloki sees ainult faili sisu, ilma lisaselgituste ja markdownita.
 Tekstifailide, koodifailide, HTML-i, SVG, JSON-i, CSV ja MD jaoks eelista artifact-blokke.
 Fotorealistliku PNG või JPG puhul kasuta pildigeneratsiooni režiimi, mitte ära teeskle binaarfaili tekstina.`
 
+function buildOutputInstructions(outputModeId?: string, artifactFormatId?: string) {
+  const outputMode = getChatOutputMode(outputModeId)
+  const artifactFormat = getChatArtifactFormat(artifactFormatId)
+
+  if (outputMode.id === 'chat') {
+    return 'Käitu tavavestlusena. Kasuta artifact-blokke ainult siis, kui kasutaja seda otseselt palub.'
+  }
+
+  const formatInstruction =
+    artifactFormat.id === 'auto'
+      ? 'Vali ise kõige sobivam failivorming vastavalt kasutaja soovile.'
+      : `Kasuta väljundina vormingut ${artifactFormat.label}, faililaiendit ${artifactFormat.extension} ja MIME tüüpi ${artifactFormat.mime}.`
+
+  const richDocumentInstruction =
+    artifactFormat.id === 'pdf' || artifactFormat.id === 'docx'
+      ? 'PDF ja DOCX puhul pane artifact-bloki sisse puhas tekstiline või markdown-laadne sisu. UI koostab sellest allalaetava dokumendi.'
+      : ''
+
+  if (outputMode.id === 'file') {
+    return `${formatInstruction} Loo vähemalt üks artifact-blokk isegi siis, kui kasutaja ei maini sõna fail. Anna enne faili lühike 1-2 lauseline selgitus. ${richDocumentInstruction}`.trim()
+  }
+
+  return `${formatInstruction} Loo vähemalt kaks omavahel seotud artifact-blokki, et kasutaja saaks need ZIP-ina alla laadida. Kui ülesanne annaks tavaliselt ühe faili, jaga tulemus mõistlikeks osadeks. ${richDocumentInstruction}`.trim()
+}
+
 export async function POST(req: Request) {
-  const {
-    messages,
-    modelId,
-    promptProfileId,
-  }: {
+  let payload: {
     messages: UIMessage[]
     modelId?: string
     promptProfileId?: string
-  } = await req.json()
+    outputMode?: string
+    artifactFormat?: string
+  }
+
+  try {
+    payload = await parseJsonBody(req, chatRequestSchema, {
+      maxBytes: 512 * 1024,
+      emptyBodyMessage: 'Chat body puudub.',
+    })
+  } catch (error) {
+    return createValidationErrorResponse(error, 'Chat parsimine ebaõnnestus.')
+  }
+
+  const { messages, modelId, promptProfileId, outputMode, artifactFormat } = payload
 
   if (!process.env.GROQ_API_KEY) {
     return new Response(
@@ -40,10 +80,11 @@ export async function POST(req: Request) {
     )
   }
 
-  const knowledgeContext = knowledgeStore.getContext()
+  const knowledgeContext = await knowledgeStore.getContext()
   const selectedModel = getTextModel(modelId)
   const selectedProfile = getPromptProfile(promptProfileId)
-  const system = `${BASE_SYSTEM}\n${selectedProfile.systemSuffix}${knowledgeContext}`
+  const outputInstructions = buildOutputInstructions(outputMode, artifactFormat)
+  const system = `${BASE_SYSTEM}\n${selectedProfile.systemSuffix}\n${outputInstructions}${knowledgeContext}`
   const result = streamText({
     model: groq(selectedModel.model),
     system,

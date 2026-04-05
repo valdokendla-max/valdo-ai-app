@@ -1,15 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { X, Plus, BookOpen, Lightbulb, FileText, Palette, Trash2, ArrowLeft } from 'lucide-react'
-
-interface KnowledgeItem {
-  id: string
-  title: string
-  content: string
-  category: 'juhis' | 'naidis' | 'fakt' | 'stiil'
-  createdAt: string
-}
+import { resolveClientApiPath } from '@/lib/chat-client'
+import {
+  KNOWLEDGE_ADMIN_HEADER,
+  KNOWLEDGE_ADMIN_STORAGE_KEY,
+  type KnowledgeCategory,
+  type KnowledgeItem,
+} from '@/lib/knowledge'
 
 const CATEGORY_CONFIG = {
   juhis: { label: 'Juhis', icon: BookOpen, description: 'Kaitumisjuhised ja reeglid' },
@@ -23,85 +22,136 @@ interface KnowledgePanelProps {
   onClose: () => void
 }
 
-const PUBLIC_HOST = 'valdo-ai-webapp.vercel.app'
-const PROTECTED_HOSTS = new Set([
-  'valdo-ai-webapp-valdos-projects-48d5db42.vercel.app',
-  'valdo-ai-webapp-git-main-valdos-projects-48d5db42.vercel.app',
-])
-
-function resolveClientApiPath(path: string) {
-  if (typeof window === 'undefined') {
-    return path
-  }
-
-  if (!PROTECTED_HOSTS.has(window.location.host)) {
-    return path
-  }
-
-  return `https://${PUBLIC_HOST}${path}`
-}
-
 export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
   const [items, setItems] = useState<KnowledgeItem[]>([])
   const [isAdding, setIsAdding] = useState(false)
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
-  const [category, setCategory] = useState<KnowledgeItem['category']>('juhis')
+  const [category, setCategory] = useState<KnowledgeCategory>('juhis')
   const [isLoading, setIsLoading] = useState(false)
+  const [adminToken, setAdminToken] = useState('')
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const dialogTitleId = 'knowledge-panel-title'
   const dialogDescriptionId = 'knowledge-panel-description'
   const titleInputId = 'knowledge-item-title'
   const contentInputId = 'knowledge-item-content'
 
-  const fetchItems = async () => {
-    try {
-      const res = await fetch(resolveClientApiPath('/api/knowledge'))
-      const data = await res.json()
-      setItems(data)
-    } catch {
-      /* ignore */
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
     }
-  }
+
+    setAdminToken(window.localStorage.getItem(KNOWLEDGE_ADMIN_STORAGE_KEY) || '')
+  }, [])
 
   useEffect(() => {
-    if (isOpen && items.length === 0) {
-      (async () => {
-        try {
-          const res = await fetch(resolveClientApiPath('/api/knowledge'));
-          const data = await res.json();
-          setItems(data);
-        } catch {
-          /* ignore */
-        }
-      })();
+    if (typeof window === 'undefined') {
+      return
     }
-  }, [isOpen, items.length]);
+
+    if (adminToken.trim()) {
+      window.localStorage.setItem(KNOWLEDGE_ADMIN_STORAGE_KEY, adminToken.trim())
+      return
+    }
+
+    window.localStorage.removeItem(KNOWLEDGE_ADMIN_STORAGE_KEY)
+  }, [adminToken])
+
+  const getKnowledgeHeaders = useCallback((includeJsonContentType = false) => {
+    const headers = new Headers()
+
+    if (includeJsonContentType) {
+      headers.set('Content-Type', 'application/json')
+    }
+
+    if (adminToken.trim()) {
+      headers.set(KNOWLEDGE_ADMIN_HEADER, adminToken.trim())
+    }
+
+    return headers
+  }, [adminToken])
+
+  const fetchItems = useCallback(async () => {
+    try {
+      const res = await fetch(resolveClientApiPath('/api/knowledge'), {
+        headers: getKnowledgeHeaders(),
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Teadmistebaasi laadimine ebaõnnestus.')
+      }
+
+      setItems(data)
+      setStatusMessage(null)
+    } catch (error) {
+      setItems([])
+      setStatusMessage(
+        error instanceof Error ? error.message : 'Teadmistebaasi laadimine ebaõnnestus.'
+      )
+    }
+  }, [getKnowledgeHeaders])
+
+  useEffect(() => {
+    if (!isOpen || !adminToken.trim()) {
+      return
+    }
+
+    void fetchItems()
+  }, [adminToken, fetchItems, isOpen])
 
   const handleAdd = async () => {
     if (!title.trim() || !content.trim()) return
     setIsLoading(true)
+
     try {
-      await fetch(resolveClientApiPath('/api/knowledge'), {
+      const response = await fetch(resolveClientApiPath('/api/knowledge'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getKnowledgeHeaders(true),
         body: JSON.stringify({ title, content, category }),
       })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Teadmistebaasi salvestamine ebaõnnestus.')
+      }
+
       setTitle('')
       setContent('')
       setIsAdding(false)
+      setStatusMessage(null)
       await fetchItems()
-    } catch {
-      /* ignore */
+    } catch (error) {
+      setStatusMessage(
+        error instanceof Error ? error.message : 'Teadmistebaasi salvestamine ebaõnnestus.'
+      )
     }
+
     setIsLoading(false)
   }
 
   const handleDelete = async (id: string) => {
     try {
-      await fetch(`${resolveClientApiPath('/api/knowledge')}?id=${id}`, { method: 'DELETE' })
+      const response = await fetch(`${resolveClientApiPath('/api/knowledge')}?id=${id}`, {
+        method: 'DELETE',
+        headers: getKnowledgeHeaders(),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Teadmistebaasi kirje kustutamine ebaõnnestus.')
+      }
+
+      setStatusMessage(null)
       await fetchItems()
-    } catch {
-      /* ignore */
+    } catch (error) {
+      setStatusMessage(
+        error instanceof Error
+          ? error.message
+          : 'Teadmistebaasi kirje kustutamine ebaõnnestus.'
+      )
     }
   }
 
@@ -153,8 +203,39 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
           </div>
         </div>
 
+        <div className="border-b border-border px-5 py-4">
+          <div className="flex flex-col gap-2">
+            <label htmlFor="knowledge-admin-token" className="text-xs font-medium text-foreground">
+              Teadmistebaasi admin token
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="knowledge-admin-token"
+                name="knowledge-admin-token"
+                type="password"
+                value={adminToken}
+                onChange={(event) => setAdminToken(event.target.value)}
+                placeholder="KNOWLEDGE_ADMIN_TOKEN"
+                className="w-full rounded-lg border border-border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <button
+                type="button"
+                onClick={() => void fetchItems()}
+                disabled={!adminToken.trim()}
+                className="rounded-lg bg-secondary px-3 py-2 text-xs text-foreground transition-colors hover:bg-secondary/80 disabled:opacity-50"
+              >
+                Ava
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ilma tokenita ei saa teadmistebaasi vaadata ega muuta.
+            </p>
+            {statusMessage ? <p className="text-xs text-destructive">{statusMessage}</p> : null}
+          </div>
+        </div>
+
         {/* Add Form */}
-        {isAdding && (
+        {isAdding && adminToken.trim() && (
           <div className="border-b border-border p-5">
             <div className="flex flex-col gap-3">
               <input
@@ -220,7 +301,17 @@ export function KnowledgePanel({ isOpen, onClose }: KnowledgePanelProps) {
 
         {/* Items List */}
         <div className="flex-1 overflow-y-auto p-5">
-          {items.length === 0 ? (
+          {!adminToken.trim() ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-secondary">
+                <BookOpen className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <p className="text-sm text-muted-foreground">Sisesta admin token</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Alles siis saab teadmistebaasi turvaliselt avada ja muuta.
+              </p>
+            </div>
+          ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-secondary">
                 <BookOpen className="h-5 w-5 text-muted-foreground" />

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UIMessage } from 'ai'
 import { ChatHeader } from '@/components/chat-header'
 import { ChatMessage } from '@/components/chat-message'
@@ -9,19 +9,28 @@ import { HubStatusBar } from '@/components/hub-status-bar'
 import { ChatWelcome } from '@/components/chat-welcome'
 import { KnowledgePanel } from '@/components/knowledge-panel'
 import {
+  DEFAULT_IMAGE_ASPECT_RATIO_ID,
   DEFAULT_IMAGE_PIPELINE_ID,
   DEFAULT_IMAGE_PROVIDER_ID,
   DEFAULT_PROMPT_PROFILE_ID,
+  DEFAULT_IMAGE_STYLE_PRESET_ID,
   DEFAULT_TEXT_MODEL_ID,
+  type ImageAspectRatioId,
   type ImagePipelineId,
   type ImageProviderId,
+  type ImageStylePresetId,
   type PromptProfileId,
   type TextModelId,
 } from '@/lib/ai-hub'
 import {
+  DEFAULT_CHAT_ARTIFACT_FORMAT,
+  DEFAULT_CHAT_OUTPUT_MODE,
+  type ChatArtifactFormatId,
+  type ChatOutputModeId,
+} from '@/lib/chat-output'
+import {
   buildImageStatusText,
   createTextMessage,
-  parseStoredMessages,
   PUBLIC_HOST,
   PROTECTED_HOSTS,
   resolveClientApiPath,
@@ -30,8 +39,17 @@ import {
   type ChatStreamEvent,
   type ImageJobStatus,
 } from '@/lib/chat-client'
+import {
+  CHAT_CONVERSATIONS_STORAGE_KEY,
+  buildConversationTitle,
+  createConversation,
+  createDefaultConversationSettings,
+  parseConversationState,
+  type ConversationSettings,
+  type StoredConversation,
+} from '@/lib/chat-conversations'
 
-type DisplayImageStage = 'idle' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
+type DisplayImageStage = 'idle' | 'starting' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
 
 type ImageStatusResponse = {
   status: ImageJobStatus
@@ -44,7 +62,13 @@ type ImageGenerateResponse = {
   promptId?: string
   shouldUpscale?: boolean
   provider?: ImageProviderId
+  usedSeed?: number
   error?: string
+}
+
+type ConversationReferenceImage = {
+  name: string
+  dataUrl: string
 }
 
 type BackendHealthResponse = {
@@ -55,8 +79,18 @@ type BackendHealthResponse = {
 const HUB_SETTINGS_STORAGE_KEY = 'valdo-ai-hub-settings'
 const CHAT_MESSAGES_STORAGE_KEY = 'valdo-ai-chat-messages'
 
+function isNearBottom(element: HTMLDivElement, threshold = 72) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold
+}
+
 export default function ValdoAI() {
+  const [conversations, setConversations] = useState<StoredConversation[]>([])
+  const [activeConversationId, setActiveConversationId] = useState('')
+  const [isConversationStateReady, setIsConversationStateReady] = useState(false)
   const [messages, setMessages] = useState<UIMessage[]>([])
+  const [referenceImagesByConversation, setReferenceImagesByConversation] = useState<
+    Record<string, ConversationReferenceImage | undefined>
+  >({})
   const [input, setInput] = useState('')
   const [knowledgeOpen, setKnowledgeOpen] = useState(false)
   const [isImageMode, setIsImageMode] = useState(false)
@@ -68,9 +102,22 @@ export default function ValdoAI() {
   const [promptProfileId, setPromptProfileId] = useState<PromptProfileId>(
     DEFAULT_PROMPT_PROFILE_ID
   )
+  const [outputMode, setOutputMode] = useState<ChatOutputModeId>(DEFAULT_CHAT_OUTPUT_MODE)
+  const [artifactFormat, setArtifactFormat] = useState<ChatArtifactFormatId>(
+    DEFAULT_CHAT_ARTIFACT_FORMAT
+  )
   const [imageProviderId, setImageProviderId] = useState<ImageProviderId>(
     DEFAULT_IMAGE_PROVIDER_ID
   )
+  const [imageAspectRatioId, setImageAspectRatioId] = useState<ImageAspectRatioId>(
+    DEFAULT_IMAGE_ASPECT_RATIO_ID
+  )
+  const [imageStylePresetId, setImageStylePresetId] = useState<ImageStylePresetId>(
+    DEFAULT_IMAGE_STYLE_PRESET_ID
+  )
+  const [imageSeed, setImageSeed] = useState<number | null>(null)
+  const [imageVariationStrength, setImageVariationStrength] = useState(0)
+  const [imageToImageStrength, setImageToImageStrength] = useState(45)
   const [imagePipelineId, setImagePipelineId] = useState<ImagePipelineId>(
     DEFAULT_IMAGE_PIPELINE_ID
   )
@@ -81,6 +128,98 @@ export default function ValdoAI() {
   const [isRedirectingHost, setIsRedirectingHost] = useState(false)
   const [apiBaseUrl, setApiBaseUrl] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+  const pendingScrollTopRef = useRef<number | null>(null)
+  const shouldAutoScrollRef = useRef(true)
+  const activeRequestControllerRef = useRef<AbortController | null>(null)
+  const activeMessageIdRef = useRef<string | null>(null)
+  const activeTaskTypeRef = useRef<'text' | 'image' | null>(null)
+
+  const setActiveRequest = (controller: AbortController, messageId: string, type: 'text' | 'image') => {
+    activeRequestControllerRef.current = controller
+    activeMessageIdRef.current = messageId
+    activeTaskTypeRef.current = type
+  }
+
+  const clearActiveRequest = () => {
+    activeRequestControllerRef.current = null
+    activeMessageIdRef.current = null
+    activeTaskTypeRef.current = null
+  }
+
+  const applyConversation = (conversation: StoredConversation) => {
+    setMessages(conversation.messages)
+    setInput(conversation.draftInput)
+    setIsImageMode(conversation.settings.isImageMode)
+    setTextModelId(conversation.settings.textModelId)
+    setPromptProfileId(conversation.settings.promptProfileId)
+    setOutputMode(conversation.settings.outputMode)
+    setArtifactFormat(conversation.settings.artifactFormat)
+    setImageProviderId(conversation.settings.imageProviderId)
+    setImageAspectRatioId(conversation.settings.imageAspectRatioId)
+    setImageStylePresetId(conversation.settings.imageStylePresetId)
+    setImageSeed(conversation.settings.imageSeed)
+    setImageVariationStrength(conversation.settings.imageVariationStrength)
+    setImageToImageStrength(conversation.settings.imageToImageStrength)
+    setImagePipelineId(conversation.settings.imagePipelineId)
+    setEnhancePrompt(conversation.settings.enhancePrompt)
+    setChatError(undefined)
+    setImageError(undefined)
+    setIsImageLoading(false)
+    setIsTextLoading(false)
+    setImageStage('idle')
+    setActiveImageProviderId(null)
+    pendingScrollTopRef.current = conversation.scrollTop
+  }
+
+  const buildCurrentConversationSettings = useCallback((): ConversationSettings => ({
+    isImageMode,
+    textModelId,
+    promptProfileId,
+    outputMode,
+    artifactFormat,
+    imageProviderId,
+    imageAspectRatioId,
+    imageStylePresetId,
+    imageSeed,
+    imageVariationStrength,
+    imageToImageStrength,
+    imagePipelineId,
+    enhancePrompt,
+  }), [
+    artifactFormat,
+    enhancePrompt,
+    imageAspectRatioId,
+    imagePipelineId,
+    imageProviderId,
+    imageSeed,
+    imageStylePresetId,
+    imageToImageStrength,
+    imageVariationStrength,
+    isImageMode,
+    outputMode,
+    promptProfileId,
+    textModelId,
+  ])
+
+  const currentReferenceImage =
+    activeConversationId ? referenceImagesByConversation[activeConversationId] ?? null : null
+
+  const updateActiveConversation = useCallback((updater: (conversation: StoredConversation) => StoredConversation) => {
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === activeConversationId ? updater(conversation) : conversation
+      )
+    )
+  }, [activeConversationId])
+
+  const persistCurrentScrollPosition = () => {
+    const currentScrollTop = scrollRef.current?.scrollTop ?? 0
+
+    updateActiveConversation((conversation) => ({
+      ...conversation,
+      scrollTop: currentScrollTop,
+    }))
+  }
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -140,92 +279,191 @@ export default function ValdoAI() {
       return
     }
 
-    const storedMessages = parseStoredMessages(window.localStorage.getItem(CHAT_MESSAGES_STORAGE_KEY))
+    const storedState = parseConversationState(
+      window.localStorage.getItem(CHAT_CONVERSATIONS_STORAGE_KEY)
+    )
 
-    if (storedMessages.length > 0) {
-      setMessages(storedMessages)
-    }
+    let nextConversations = storedState.conversations
+    let nextActiveConversationId = storedState.activeConversationId
 
-    const stored = window.localStorage.getItem(HUB_SETTINGS_STORAGE_KEY)
+    if (nextConversations.length === 0) {
+      const defaultSettings = createDefaultConversationSettings()
+      const legacyMessagesRaw = window.localStorage.getItem(CHAT_MESSAGES_STORAGE_KEY)
+      const legacySettingsRaw = window.localStorage.getItem(HUB_SETTINGS_STORAGE_KEY)
+      let migratedSettings = defaultSettings
 
-    if (!stored) {
-      return
-    }
-
-    try {
-      const parsed = JSON.parse(stored) as {
-        textModelId?: TextModelId
-        promptProfileId?: PromptProfileId
-        imageProviderId?: ImageProviderId
-        imagePipelineId?: ImagePipelineId
-        enhancePrompt?: boolean
-        isImageMode?: boolean
+      if (legacySettingsRaw) {
+        try {
+          const parsed = JSON.parse(legacySettingsRaw) as Partial<ConversationSettings>
+          migratedSettings = {
+            ...defaultSettings,
+            ...parsed,
+          }
+        } catch {
+          window.localStorage.removeItem(HUB_SETTINGS_STORAGE_KEY)
+        }
       }
 
-      if (parsed.textModelId) setTextModelId(parsed.textModelId)
-      if (parsed.promptProfileId) setPromptProfileId(parsed.promptProfileId)
-      if (parsed.imageProviderId) setImageProviderId(parsed.imageProviderId)
-      if (parsed.imagePipelineId) setImagePipelineId(parsed.imagePipelineId)
-      if (typeof parsed.enhancePrompt === 'boolean') setEnhancePrompt(parsed.enhancePrompt)
-      if (typeof parsed.isImageMode === 'boolean') setIsImageMode(parsed.isImageMode)
-    } catch {
-      window.localStorage.removeItem(HUB_SETTINGS_STORAGE_KEY)
+      const migratedMessages = legacyMessagesRaw
+        ? parseConversationState(
+            JSON.stringify({
+              activeConversationId: 'legacy',
+              conversations: [
+                {
+                  id: 'legacy',
+                  messages: JSON.parse(legacyMessagesRaw),
+                  settings: migratedSettings,
+                },
+              ],
+            })
+          ).conversations[0]?.messages ?? []
+        : []
+
+      const migratedConversation = createConversation(migratedSettings, {
+        messages: migratedMessages,
+      })
+
+      nextConversations = [migratedConversation]
+      nextActiveConversationId = migratedConversation.id
     }
+
+    const activeConversation =
+      nextConversations.find((conversation) => conversation.id === nextActiveConversationId) ??
+      nextConversations[0]
+
+    setConversations(nextConversations)
+    setActiveConversationId(activeConversation.id)
+    applyConversation(activeConversation)
+    setIsConversationStateReady(true)
   }, [])
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return
-    }
-
-    if (messages.length === 0) {
-      window.localStorage.removeItem(CHAT_MESSAGES_STORAGE_KEY)
+    if (typeof window === 'undefined' || !isConversationStateReady || !activeConversationId) {
       return
     }
 
     window.localStorage.setItem(
-      CHAT_MESSAGES_STORAGE_KEY,
-      JSON.stringify(serializeMessagesForStorage(messages))
-    )
-  }, [messages])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return
-    }
-
-    window.localStorage.setItem(
-      HUB_SETTINGS_STORAGE_KEY,
+      CHAT_CONVERSATIONS_STORAGE_KEY,
       JSON.stringify({
-        textModelId,
-        promptProfileId,
-        imageProviderId,
-        imagePipelineId,
-        enhancePrompt,
-        isImageMode,
+        activeConversationId,
+        conversations: conversations.map((conversation) => ({
+          ...conversation,
+          messages: serializeMessagesForStorage(conversation.messages),
+        })),
       })
     )
+    window.localStorage.removeItem(CHAT_MESSAGES_STORAGE_KEY)
+    window.localStorage.removeItem(HUB_SETTINGS_STORAGE_KEY)
+  }, [activeConversationId, conversations, isConversationStateReady])
+
+  useEffect(() => {
+    if (!isConversationStateReady || !activeConversationId) {
+      return
+    }
+
+    updateActiveConversation((conversation) => ({
+      ...conversation,
+      title: buildConversationTitle(messages),
+      messages,
+      draftInput: input,
+      settings: buildCurrentConversationSettings(),
+      updatedAt: new Date().toISOString(),
+    }))
   }, [
+    activeConversationId,
     enhancePrompt,
+    artifactFormat,
+    buildCurrentConversationSettings,
+    imageAspectRatioId,
     imagePipelineId,
     imageProviderId,
+    imageSeed,
+    imageStylePresetId,
+    imageToImageStrength,
+    imageVariationStrength,
+    input,
+    isConversationStateReady,
     isImageMode,
+    messages,
+    outputMode,
     promptProfileId,
     textModelId,
+    updateActiveConversation,
   ])
 
   const isLoading = isTextLoading
   const isBusy = isLoading || isImageLoading
+  const canCancel =
+    isBusy || imageStage === 'starting' || imageStage === 'queued' || imageStage === 'running' || imageStage === 'enhancing'
   const displayError = imageError || chatError
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (!scrollRef.current) {
+      return
+    }
+
+    if (pendingScrollTopRef.current !== null) {
+      const targetScrollTop = pendingScrollTopRef.current
+      pendingScrollTopRef.current = null
+      window.requestAnimationFrame(() => {
+        if (!scrollRef.current) {
+          return
+        }
+
+        scrollRef.current.scrollTop = targetScrollTop
+        shouldAutoScrollRef.current = isNearBottom(scrollRef.current)
+      })
+      return
+    }
+
+    if (shouldAutoScrollRef.current || isNearBottom(scrollRef.current)) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [messages, isImageLoading])
+  }, [activeConversationId, isImageLoading, isTextLoading, messages])
 
   const handleTextSubmit = () => {
     void submitTextPrompt(input)
+  }
+
+  const appendSystemSuffixToMessage = (messageId: string, suffix: string) => {
+    setMessages((current) =>
+      current.map((message) => {
+        if (message.id !== messageId) {
+          return message
+        }
+
+        const currentText = message.parts
+          ?.filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+          .map((part) => part.text)
+          .join('') || ''
+
+        const nextText = currentText.trim() ? `${currentText}\n\n${suffix}` : suffix
+
+        return {
+          ...message,
+          parts: [{ type: 'text', text: nextText }],
+        }
+      })
+    )
+  }
+
+  const stopActiveTask = () => {
+    const activeController = activeRequestControllerRef.current
+    const activeMessageId = activeMessageIdRef.current
+
+    activeController?.abort()
+
+    if (activeMessageId) {
+      appendSystemSuffixToMessage(activeMessageId, 'Tegevus peatati kasutaja poolt.')
+    }
+
+    setChatError(undefined)
+    setImageError(undefined)
+    setIsTextLoading(false)
+    setIsImageLoading(false)
+    setImageStage('idle')
+    setActiveImageProviderId(null)
+    clearActiveRequest()
   }
 
   const appendMessageText = (messageId: string, chunk: string) => {
@@ -248,7 +486,11 @@ export default function ValdoAI() {
     )
   }
 
-  const consumeChatStream = async (response: Response, assistantMessageId: string) => {
+  const consumeChatStream = async (
+    response: Response,
+    assistantMessageId: string,
+    signal: AbortSignal
+  ) => {
     const reader = response.body?.getReader()
 
     if (!reader) {
@@ -260,6 +502,10 @@ export default function ValdoAI() {
     let sawTextDelta = false
 
     while (true) {
+      if (signal.aborted) {
+        throw new DOMException('Chat stream peatati.', 'AbortError')
+      }
+
       const { done, value } = await reader.read()
 
       if (done) {
@@ -316,7 +562,10 @@ export default function ValdoAI() {
     setImageError(undefined)
     setIsTextLoading(true)
     setInput('')
+    shouldAutoScrollRef.current = true
     setMessages((current) => [...current, userMessage, assistantPlaceholder])
+    const controller = new AbortController()
+    setActiveRequest(controller, assistantPlaceholder.id, 'text')
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/chat`, {
@@ -326,7 +575,10 @@ export default function ValdoAI() {
           messages: sanitizeMessagesForChatModel([...messages, userMessage]),
           modelId: textModelId,
           promptProfileId,
+          outputMode,
+          artifactFormat,
         }),
+        signal: controller.signal,
       })
 
       if (!response.ok) {
@@ -334,13 +586,20 @@ export default function ValdoAI() {
         throw new Error(errorText || 'Tekstivastus ebaõnnestus.')
       }
 
-      await consumeChatStream(response, assistantPlaceholder.id)
+      await consumeChatStream(response, assistantPlaceholder.id, controller.signal)
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+
       const message = error instanceof Error ? error.message : 'Tekstivastus ebaõnnestus.'
       setChatError(message)
       replaceMessageText(assistantPlaceholder.id, `Vastamine ebaõnnestus: ${message}`)
     } finally {
       setIsTextLoading(false)
+      if (activeMessageIdRef.current === assistantPlaceholder.id) {
+        clearActiveRequest()
+      }
     }
   }
 
@@ -357,7 +616,9 @@ export default function ValdoAI() {
     placeholderId: string,
     imageDataUrl: string,
     shouldUpscale: boolean,
-    pipelineId: ImagePipelineId
+    pipelineId: ImagePipelineId,
+    usedSeed?: number,
+    signal?: AbortSignal
   ) => {
     let finalImageDataUrl = imageDataUrl
 
@@ -373,6 +634,7 @@ export default function ValdoAI() {
           imageDataUrl,
           pipelineId,
         }),
+        signal,
       })
 
       const data = await response.json()
@@ -386,7 +648,7 @@ export default function ValdoAI() {
 
     const assistantMessage = createTextMessage(
       'assistant',
-      `Loodud pilt promptist: **${prompt}**\n\n![Loodud pilt](${finalImageDataUrl})`
+      `Loodud pilt promptist: **${prompt}**${usedSeed === undefined ? '' : `\n\nSeed: **${usedSeed}** · Stiil: **${imageStylePresetId}** · Variatsioon: **${imageVariationStrength}%**${currentReferenceImage ? ` · Viitepilt: **${currentReferenceImage.name}** · Tugevus: **${imageToImageStrength}%**` : ''}`}\n\n![Loodud pilt](${finalImageDataUrl})`
     )
 
     setMessages((current) =>
@@ -400,15 +662,39 @@ export default function ValdoAI() {
     placeholderId: string,
     prompt: string,
     shouldUpscale: boolean,
-    pipelineId: ImagePipelineId
+    pipelineId: ImagePipelineId,
+    usedSeed?: number,
+    signal?: AbortSignal
   ) => {
+    const wait = (ms: number) =>
+      new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve()
+        }, ms)
+
+        const onAbort = () => {
+          window.clearTimeout(timer)
+          signal?.removeEventListener('abort', onAbort)
+          reject(new DOMException('Pilditöö peatati.', 'AbortError'))
+        }
+
+        if (signal?.aborted) {
+          onAbort()
+          return
+        }
+
+        signal?.addEventListener('abort', onAbort)
+      })
+
     for (let attempt = 0; attempt < 90; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, 4000))
+      await wait(4000)
 
       const params = new URLSearchParams({ promptId })
 
       const response = await fetch(`${resolveClientApiPath('/api/image')}?${params.toString()}`, {
         cache: 'no-store',
+        signal,
       })
 
       const data = (await response.json()) as ImageStatusResponse
@@ -418,7 +704,15 @@ export default function ValdoAI() {
       }
 
       if (data.status === 'succeeded' && data.imageDataUrl) {
-        await finalizeImageResult(prompt, placeholderId, data.imageDataUrl, shouldUpscale, pipelineId)
+        await finalizeImageResult(
+          prompt,
+          placeholderId,
+          data.imageDataUrl,
+          shouldUpscale,
+          pipelineId,
+          usedSeed,
+          signal
+        )
         return
       }
 
@@ -444,21 +738,29 @@ export default function ValdoAI() {
     const prompt = input.trim()
     const activePipelineId = imagePipelineId
     const activeEnhancePrompt = enhancePrompt
+    const activeStylePresetId = imageStylePresetId
+    const activeSeed = imageSeed
+    const activeVariationStrength = imageVariationStrength
+    const activeImageToImageStrength = imageToImageStrength
+    const activeReferenceImage = currentReferenceImage
 
     if (!prompt || isBusy) return
 
     const userMessage = createTextMessage('user', prompt)
     const placeholderMessage = createTextMessage(
       'assistant',
-      buildImageStatusText(prompt, 'queued')
+      buildImageStatusText(prompt, 'starting')
     )
 
     setImageError(undefined)
     setIsImageLoading(true)
-    setImageStage('queued')
+    setImageStage('starting')
     setActiveImageProviderId(imageProviderId === 'auto' ? null : imageProviderId)
     setInput('')
+    shouldAutoScrollRef.current = true
     setMessages((current) => [...current, userMessage, placeholderMessage])
+    const controller = new AbortController()
+    setActiveRequest(controller, placeholderMessage.id, 'image')
 
     try {
       const response = await fetch(resolveClientApiPath('/api/image'), {
@@ -467,9 +769,16 @@ export default function ValdoAI() {
         body: JSON.stringify({
           prompt,
           providerId: imageProviderId,
+          aspectRatioId: imageAspectRatioId,
+          stylePresetId: activeStylePresetId,
+          seed: activeSeed,
+          variationStrength: activeVariationStrength,
+          referenceImageDataUrl: activeReferenceImage?.dataUrl,
+          imageToImageStrength: activeImageToImageStrength,
           pipelineId: activePipelineId,
           enhancePrompt: activeEnhancePrompt,
         }),
+        signal: controller.signal,
       })
 
       const data = (await response.json()) as ImageGenerateResponse
@@ -488,7 +797,9 @@ export default function ValdoAI() {
           placeholderMessage.id,
           data.imageDataUrl,
           Boolean(data.shouldUpscale ?? activeEnhancePrompt),
-          activePipelineId
+          activePipelineId,
+          data.usedSeed,
+          controller.signal
         )
         return
       }
@@ -497,14 +808,23 @@ export default function ValdoAI() {
         throw new Error('Pilditöö ei tagastanud töö ID-d.')
       }
 
+      setImageStage('queued')
+      replaceMessageText(placeholderMessage.id, buildImageStatusText(prompt, 'queued'))
+
       await pollImageJob(
         data.promptId,
         placeholderMessage.id,
         prompt,
         Boolean(data.shouldUpscale ?? activeEnhancePrompt),
-        activePipelineId
+        activePipelineId,
+        data.usedSeed,
+        controller.signal
       )
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+
       const message = error instanceof Error ? error.message : 'Pildi loomine ebaõnnestus.'
       setImageStage('failed')
       setActiveImageProviderId(null)
@@ -518,6 +838,9 @@ export default function ValdoAI() {
       )
     } finally {
       setIsImageLoading(false)
+      if (activeMessageIdRef.current === placeholderMessage.id) {
+        clearActiveRequest()
+      }
     }
   }
 
@@ -542,14 +865,77 @@ export default function ValdoAI() {
     void submitTextPrompt(text)
   }
 
-  const handleReset = () => {
-    setMessages([])
-    setChatError(undefined)
-    setImageError(undefined)
-    setIsImageLoading(false)
-    setIsTextLoading(false)
-    setImageStage('idle')
-    setActiveImageProviderId(null)
+  const handleSelectConversation = (conversationId: string) => {
+    if (conversationId === activeConversationId) {
+      return
+    }
+
+    persistCurrentScrollPosition()
+
+    const nextConversation = conversations.find((conversation) => conversation.id === conversationId)
+
+    if (!nextConversation) {
+      return
+    }
+
+    setActiveConversationId(nextConversation.id)
+    applyConversation(nextConversation)
+  }
+
+  const handleNewConversation = () => {
+    persistCurrentScrollPosition()
+
+    const newConversation = createConversation(buildCurrentConversationSettings(), {
+      draftInput: '',
+      messages: [],
+      scrollTop: 0,
+    })
+
+    setConversations((current) => [newConversation, ...current])
+    setActiveConversationId(newConversation.id)
+    applyConversation(newConversation)
+    shouldAutoScrollRef.current = true
+  }
+
+  const handleConversationScroll = () => {
+    if (!scrollRef.current) {
+      return
+    }
+
+    shouldAutoScrollRef.current = isNearBottom(scrollRef.current)
+
+    if (!isConversationStateReady || !activeConversationId) {
+      return
+    }
+
+    const currentScrollTop = scrollRef.current.scrollTop
+
+    updateActiveConversation((conversation) => ({
+      ...conversation,
+      scrollTop: currentScrollTop,
+    }))
+  }
+
+  const handleReferenceImageChange = (dataUrl: string, name: string) => {
+    if (!activeConversationId) {
+      return
+    }
+
+    setReferenceImagesByConversation((current) => ({
+      ...current,
+      [activeConversationId]: { dataUrl, name },
+    }))
+  }
+
+  const handleReferenceImageRemove = () => {
+    if (!activeConversationId) {
+      return
+    }
+
+    setReferenceImagesByConversation((current) => ({
+      ...current,
+      [activeConversationId]: undefined,
+    }))
   }
 
   if (isRedirectingHost) {
@@ -564,12 +950,24 @@ export default function ValdoAI() {
 
   return (
     <div className="flex h-dvh flex-col bg-background">
-      <ChatHeader hasMessages={messages.length > 0} onReset={handleReset} onOpenKnowledge={() => setKnowledgeOpen(true)} />
+      <ChatHeader
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        onSelectConversation={handleSelectConversation}
+        onNewConversation={handleNewConversation}
+        onOpenKnowledge={() => setKnowledgeOpen(true)}
+      />
       <HubStatusBar
         isImageMode={isImageMode}
+        outputMode={outputMode}
+        artifactFormat={artifactFormat}
         textModelId={textModelId}
         promptProfileId={promptProfileId}
         imageProviderId={imageProviderId}
+        imageAspectRatioId={imageAspectRatioId}
+        imageStylePresetId={imageStylePresetId}
+        imageSeed={imageSeed}
+        imageVariationStrength={imageVariationStrength}
         activeImageProviderId={activeImageProviderId}
         imagePipelineId={imagePipelineId}
         enhancePrompt={enhancePrompt}
@@ -578,7 +976,7 @@ export default function ValdoAI() {
       />
       <KnowledgePanel isOpen={knowledgeOpen} onClose={() => setKnowledgeOpen(false)} />
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} onScroll={handleConversationScroll} className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <ChatWelcome onSuggestionClick={handleSuggestionClick} />
         ) : (
@@ -612,20 +1010,39 @@ export default function ValdoAI() {
         input={input}
         setInput={setInput}
         onSubmit={handleSubmit}
+        onCancel={stopActiveTask}
+        canCancel={canCancel}
         isLoading={isBusy}
         error={displayError}
         isImageMode={isImageMode}
+        outputMode={outputMode}
+        artifactFormat={artifactFormat}
         textModelId={textModelId}
         promptProfileId={promptProfileId}
         imageProviderId={imageProviderId}
+        imageAspectRatioId={imageAspectRatioId}
+        imageStylePresetId={imageStylePresetId}
+        imageSeed={imageSeed}
+        imageVariationStrength={imageVariationStrength}
+        imageToImageStrength={imageToImageStrength}
+        referenceImage={currentReferenceImage}
         imagePipelineId={imagePipelineId}
         enhancePrompt={enhancePrompt}
         backendHealth={backendHealth}
         onTextModelChange={setTextModelId}
         onPromptProfileChange={setPromptProfileId}
         onImageProviderChange={setImageProviderId}
+        onImageAspectRatioChange={setImageAspectRatioId}
+        onImageStylePresetChange={setImageStylePresetId}
+        onImageSeedChange={setImageSeed}
+        onImageVariationStrengthChange={setImageVariationStrength}
+        onImageToImageStrengthChange={setImageToImageStrength}
+        onReferenceImageChange={handleReferenceImageChange}
+        onReferenceImageRemove={handleReferenceImageRemove}
         onImagePipelineChange={setImagePipelineId}
         onEnhancePromptChange={setEnhancePrompt}
+        onOutputModeChange={setOutputMode}
+        onArtifactFormatChange={setArtifactFormat}
         onToggleImageMode={() => {
           setImageError(undefined)
           setIsImageMode((current) => !current)

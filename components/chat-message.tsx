@@ -3,6 +3,7 @@
 import type { UIMessage } from 'ai'
 import JSZip from 'jszip'
 import { Bot, Download, FileArchive, FileText, ImageDown, User } from 'lucide-react'
+import NextImage from 'next/image'
 import { memo, useMemo } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -38,11 +39,8 @@ async function downloadArtifactsAsZip(artifacts: ChatArtifact[]) {
   const zip = new JSZip()
 
   for (const artifact of artifacts) {
-    if (artifact.encoding === 'base64') {
-      zip.file(artifact.name, artifact.content, { base64: true })
-    } else {
-      zip.file(artifact.name, artifact.content)
-    }
+    const blob = await createArtifactBlob(artifact)
+    zip.file(artifact.name, await blob.arrayBuffer())
   }
 
   const blob = await zip.generateAsync({ type: 'blob' })
@@ -125,7 +123,11 @@ function ArtifactPanel({ artifacts }: { artifacts: ChatArtifact[] }) {
             </div>
             <button
               type="button"
-              onClick={() => triggerBrowserDownload(createArtifactBlob(artifact), artifact.name)}
+              onClick={() => {
+                void createArtifactBlob(artifact).then((blob) => {
+                  triggerBrowserDownload(blob, artifact.name)
+                })
+              }}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-background px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary"
             >
               <Download className="h-3.5 w-3.5" />
@@ -143,7 +145,14 @@ function MarkdownImage({ src, alt }: { src: string; alt?: string }) {
 
   return (
     <div className="my-3 overflow-hidden rounded-xl border border-border/70 bg-background/40">
-      <img src={src} alt={alt || 'Loodud pilt'} className="max-h-128 w-full object-cover" />
+      <NextImage
+        src={src}
+        alt={alt || 'Loodud pilt'}
+        width={1024}
+        height={1024}
+        unoptimized
+        className="max-h-128 h-auto w-full object-cover"
+      />
       <div className="flex flex-wrap gap-2 border-t border-border/60 px-3 py-2">
         <button
           type="button"

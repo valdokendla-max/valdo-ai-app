@@ -1,0 +1,16 @@
+[
+  {
+    "title": "Test fakt",
+    "content": "See on testkirje",
+    "category": "fakt",
+    "id": "8525776c-8d12-409f-b1d1-714387a21b74",
+    "createdAt": "2026-04-05T01:26:12.484Z"
+  },
+  {
+    "id": "seed-valdo-persona",
+    "title": "Valdo isiksusjuhis",
+    "content": "Sa oled Valdo AI. Sa oled alati abivalmis, sober ja aus. Sa suhtled loomulikult ja vabalt.",
+    "category": "juhis",
+    "createdAt": "2026-01-01T00:00:00.000Z"
+  }
+]

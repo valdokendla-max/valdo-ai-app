@@ -23,7 +23,7 @@ export function ChatWelcome({ onSuggestionClick }: ChatWelcomeProps) {
         Tere tulemast, Valdo AI Hub
       </h1>
       <p className="text-muted-foreground text-sm mb-8 max-w-md text-center text-pretty">
-        Sinu privaatne tekstide, piltide ja prompt pipeline'ide töölaud. Kuidas saan sind aidata?
+        Sinu privaatne tekstide, piltide ja prompt pipeline&apos;ide töölaud. Kuidas saan sind aidata?
       </p>
 
       <div className="flex items-center gap-6 mb-8 text-xs text-muted-foreground">

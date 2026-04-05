@@ -33,6 +33,14 @@ npm start
 ## Deployment
 - Soovitatav kasutada Vercel või Netlify platvormi kiireks deploymentiks.
 
+## Teadmistebaasi turve ja püsivus
+
+- `/api/knowledge` on nüüd admin-tokeniga kaitstud. Seadista `KNOWLEDGE_ADMIN_TOKEN` ning saada see kliendist headeris `x-knowledge-admin-token`.
+- Chat route loeb teadmistebaasi endiselt serveris, kuid teadmisekirjed lisatakse süsteemprompti ainult lisakontekstina ega tohi tühistada süsteemi- ega ohutusreegleid.
+- Teadmistebaas ei ole enam ainult protsessimälus.
+- Kui `KV_REST_API_URL` ja `KV_REST_API_TOKEN` on olemas, salvestatakse teadmistebaas jagatud Vercel KV-sse mitme instantsi jaoks.
+- Kui KV pole seadistatud, kasutatakse lokaalses arenduses faili `data/knowledge-store.json`.
+
 ## Pildigeneratsioon ComfyUI kaudu
 
 Rakendus toetab nüüd pildiloomet eraldi /api/image route kaudu. Selle jaoks lisa Vercelis või lokaalsesse .env.local faili järgmised muutujad:
@@ -61,12 +69,12 @@ COMFYUI_BASE_URL=http://sinu-comfyui-server:8188
 COMFYUI_CHECKPOINT_NAME=flux1-dev.safetensors
 COMFYUI_API_KEY=
 COMFYUI_NEGATIVE_PROMPT=low quality, blurry, distorted, deformed, bad anatomy, extra fingers, watermark, text
-COMFYUI_WIDTH=384
-COMFYUI_HEIGHT=384
-COMFYUI_STEPS=4
-COMFYUI_CFG=2.5
-COMFYUI_SAMPLER=euler
-COMFYUI_SCHEDULER=normal
+COMFYUI_WIDTH=576
+COMFYUI_HEIGHT=576
+COMFYUI_STEPS=12
+COMFYUI_CFG=3.8
+COMFYUI_SAMPLER=dpmpp_2m
+COMFYUI_SCHEDULER=karras
 ```
 
 Märkused:
@@ -74,14 +82,17 @@ Märkused:
 - COMFYUI_CHECKPOINT_NAME peab täpselt vastama sinu ComfyUI-s olemasoleva mudelifaili nimele.
 - Kui ComfyUI kasutab autentimist, lisa COMFYUI_API_KEY.
 - Kui COMFYUI_BASE_URL on olemas, pannakse pilditöö ComfyUI järjekorda ja UI kontrollib selle olekut eraldi, nii et brauser ei jää ühe pika requesti taha kinni.
+- Viitepildiga image-to-image töötab nüüd ka ComfyUI kaudu: rakendus laeb viitepildi ComfyUI `upload/image` endpointi ja ehitab sellest `LoadImage -> VAEEncode -> KSampler` workflow.
 - Kui REPLICATE_API_TOKEN puudub, proovib app kasutada ComfyUI backendit.
 - UI-s saad pildireziimi sisse lülitada nupuga Loo pilt.
+- Kui tahad sinu setupi jaoks paremat tasuta mudelit, alusta SD1.5 perekonnast mudeliga DreamShaper 8. See järgib prompti paremini kui tavaline v1.5 pruned checkpoint ja sobib endiselt ComfyUI CPU/AMD-sõbralikuks kasutuseks.
 
 ### Backend health ja pildi staatused
 
 - `/api/backends/health` kontrollib ComfyUI ja Replicate seisu.
 - UI näitab pildireziimis eraldi staatuseid `queued`, `running`, `enhancing` ja `done`.
 - Kui `enhance` on sees, tehakse upscale eraldi järel-sammuna, mitte ei peideta seda `running` alla.
+- Turvalisuse pärast aktsepteerib `/api/image` kliendilt saadetud `imageDataUrl` ja `referenceImageDataUrl` välju ainult base64 `data:image/...;base64,...` kujul, mitte suvaliste HTTP/HTTPS URL-idena.
 
 ### Vercel deploy
 

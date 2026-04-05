@@ -1,25 +1,41 @@
 'use client'
 
 import {
+  IMAGE_ASPECT_RATIOS,
   IMAGE_PROVIDERS,
   IMAGE_PIPELINES,
+  IMAGE_STYLE_PRESETS,
   PROMPT_PROFILES,
   TEXT_MODELS,
+  type ImageAspectRatioId,
   type ImagePipelineId,
   type ImageProviderId,
+  type ImageStylePresetId,
   type PromptProfileId,
   type TextModelId,
 } from '@/lib/ai-hub'
+import {
+  CHAT_ARTIFACT_FORMATS,
+  CHAT_OUTPUT_MODES,
+  type ChatArtifactFormatId,
+  type ChatOutputModeId,
+} from '@/lib/chat-output'
 
 interface HubStatusBarProps {
   isImageMode: boolean
+  outputMode: ChatOutputModeId
+  artifactFormat: ChatArtifactFormatId
   textModelId: TextModelId
   promptProfileId: PromptProfileId
   imageProviderId: ImageProviderId
+  imageAspectRatioId: ImageAspectRatioId
+  imageStylePresetId: ImageStylePresetId
+  imageSeed: number | null
+  imageVariationStrength: number
   activeImageProviderId?: ImageProviderId | null
   imagePipelineId: ImagePipelineId
   enhancePrompt: boolean
-  imageStage?: 'idle' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
+  imageStage?: 'idle' | 'starting' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
   backendHealth?: {
     automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
     comfyui: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
@@ -50,9 +66,15 @@ function InfoPill({ value }: { value: string }) {
 
 export function HubStatusBar({
   isImageMode,
+  outputMode,
+  artifactFormat,
   textModelId,
   promptProfileId,
   imageProviderId,
+  imageAspectRatioId,
+  imageStylePresetId,
+  imageSeed,
+  imageVariationStrength,
   activeImageProviderId,
   imagePipelineId,
   enhancePrompt,
@@ -62,6 +84,16 @@ export function HubStatusBar({
   const textModel = TEXT_MODELS.find((model) => model.id === textModelId)?.label || textModelId
   const promptProfile =
     PROMPT_PROFILES.find((profile) => profile.id === promptProfileId)?.label || promptProfileId
+  const outputModeLabel =
+    CHAT_OUTPUT_MODES.find((mode) => mode.id === outputMode)?.label || outputMode
+  const artifactFormatLabel =
+    CHAT_ARTIFACT_FORMATS.find((format) => format.id === artifactFormat)?.label || artifactFormat
+  const imageAspectRatio =
+    IMAGE_ASPECT_RATIOS.find((aspectRatio) => aspectRatio.id === imageAspectRatioId)?.label ||
+    imageAspectRatioId
+  const imageStylePreset =
+    IMAGE_STYLE_PRESETS.find((preset) => preset.id === imageStylePresetId)?.label ||
+    imageStylePresetId
   const imagePipeline =
     IMAGE_PIPELINES.find((pipeline) => pipeline.id === imagePipelineId)?.label || imagePipelineId
   const selectedImageProvider =
@@ -73,8 +105,9 @@ export function HubStatusBar({
     imageProviderId === 'auto' && Boolean(activeImageProviderId) && activeImageProviderId !== 'automatic1111'
 
   const imageStageLabelMap = {
-    idle: 'Ootel',
-    queued: 'Järjekorras',
+    idle: 'Valmis',
+    starting: 'Saadab',
+    queued: 'Valmistub',
     running: 'Genereerib',
     enhancing: 'Täiustab',
     done: 'Valmis',
@@ -112,7 +145,9 @@ export function HubStatusBar({
       <div className="border-b border-border/50 bg-background/50 px-4 py-1.5 backdrop-blur-sm">
         <div className="mx-auto max-w-3xl">
           <div className="inline-flex items-center rounded-full border border-border/60 bg-card/40 px-2.5 py-1 text-[11px] text-muted-foreground">
-            Tekstireziim · valmis
+            {outputMode === 'chat'
+              ? 'Tekstireziim · valmis'
+              : `Tekstireziim · ${outputModeLabel}${artifactFormat === 'auto' ? '' : ` · ${artifactFormatLabel}`}`}
           </div>
         </div>
       </div>
@@ -124,7 +159,11 @@ export function HubStatusBar({
       <div className="border-b border-border/50 bg-background/55 px-4 py-1.5 backdrop-blur-sm">
         <div className="mx-auto flex max-w-3xl flex-wrap gap-1.5">
           <InfoPill value="Pildireziim" />
+          <InfoPill value={`Kuvasuhe · ${imageAspectRatio}`} />
+          <InfoPill value={`Stiil · ${imageStylePreset}`} />
           <InfoPill value={`Pipeline · ${imagePipeline}`} />
+          <InfoPill value={imageSeed === null ? 'Seed · auto' : `Seed · ${imageSeed}`} />
+          <InfoPill value={`Variatsioon · ${imageVariationStrength}%`} />
           <InfoPill value={`Töötlus · ${enhancePrompt ? '3 sammu' : '1 samm'}`} />
           <InfoPill value={`Staatus · ${imageStageLabelMap[imageStage]}`} />
           <InfoPill
@@ -146,7 +185,11 @@ export function HubStatusBar({
         <StatusChip label="Reziim" value={isImageMode ? 'Pilt' : 'Tekst'} />
         {isImageMode ? (
           <>
+            <StatusChip label="Kuvasuhe" value={imageAspectRatio} />
+            <StatusChip label="Stiil" value={imageStylePreset} />
             <StatusChip label="Pipeline" value={imagePipeline} />
+            <StatusChip label="Seed" value={imageSeed === null ? 'Auto' : String(imageSeed)} />
+            <StatusChip label="Variatsioon" value={`${imageVariationStrength}%`} />
             <StatusChip label="Töövoog" value={enhancePrompt ? '3 sammu' : '1 samm'} />
             <StatusChip label="Staatus" value={imageStageLabelMap[imageStage]} />
           </>
@@ -154,6 +197,10 @@ export function HubStatusBar({
           <>
             <StatusChip label="Mudeli valik" value={textModel} />
             <StatusChip label="Prompti profiil" value={promptProfile} />
+            <StatusChip label="Väljund" value={outputModeLabel} />
+            {outputMode !== 'chat' ? (
+              <StatusChip label="Formaat" value={artifactFormatLabel} />
+            ) : null}
             <StatusChip label="Staatus" value="Valmis" />
           </>
         )}
