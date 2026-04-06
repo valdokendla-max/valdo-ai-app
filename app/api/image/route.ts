@@ -54,7 +54,18 @@ const IMAGE_PROMPT_SYSTEM =
   'You optimize prompts for high-end text-to-image models. Rewrite the user request into one concise but richly descriptive English prompt. Preserve the exact requested subject, action, scene, camera angle, mood, clothing, colors, material details, and composition. Translate Estonian or mixed-language requests into natural English. Strengthen only image-relevant quality cues such as lighting, lens/framing, depth, anatomy, textures, separation, and scene coherence. Respect any provided style preset, aspect ratio, and quality target. Do not add unrelated objects, story details, extra characters, text overlays, watermarks, or brand names unless explicitly requested. Return only the final prompt, with no quotes, labels, bullets, or markdown.'
 
 function isReplicateAutoAllowed() {
-  return process.env.ALLOW_REPLICATE_AUTO === 'true'
+  const configured = Boolean(process.env.REPLICATE_API_TOKEN)
+  const explicitFlag = process.env.ALLOW_REPLICATE_AUTO
+
+  if (explicitFlag === 'false') {
+    return false
+  }
+
+  if (explicitFlag === 'true') {
+    return true
+  }
+
+  return configured
 }
 
 type ComfyImage = {
@@ -1131,6 +1142,20 @@ function getAutoProviderOrder(
   )
 }
 
+function getProviderOrder(
+  selectedProviderId: RuntimeImageProviderId | 'auto',
+  autoProviderOrder: RuntimeImageProviderId[]
+) {
+  if (selectedProviderId === 'auto') {
+    return autoProviderOrder
+  }
+
+  return [
+    selectedProviderId,
+    ...autoProviderOrder.filter((providerId) => providerId !== selectedProviderId),
+  ]
+}
+
 async function createComfyUIImage(
   prompt: string,
   signal: AbortSignal,
@@ -1333,14 +1358,10 @@ export async function POST(req: Request) {
     let lastError: Error | null = null
     let resolvedProviderId: RuntimeImageProviderId | null = null
     const autoProviderOrder = getAutoProviderOrder(selectedPipeline, hasReferenceImage)
-    const providerOrder: RuntimeImageProviderId[] =
-      hasReferenceImage
-        ? selectedProvider.id === 'auto'
-          ? autoProviderOrder
-          : [selectedProvider.id as RuntimeImageProviderId]
-        : selectedProvider.id === 'auto'
-        ? autoProviderOrder
-        : [selectedProvider.id as RuntimeImageProviderId]
+    const providerOrder: RuntimeImageProviderId[] = getProviderOrder(
+      selectedProvider.id as RuntimeImageProviderId | 'auto',
+      autoProviderOrder
+    )
 
     for (const candidateProvider of providerOrder) {
       const isConfigured =

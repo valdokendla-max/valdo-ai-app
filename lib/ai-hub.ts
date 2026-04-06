@@ -255,7 +255,7 @@ export const IMAGE_SAFETY_MODES = [
 
 export const DEFAULT_TEXT_MODEL_ID: TextModelId = 'llama-3.3-70b'
 export const DEFAULT_PROMPT_PROFILE_ID: PromptProfileId = 'balanced'
-export const DEFAULT_IMAGE_PROVIDER_ID: ImageProviderId = 'comfyui'
+export const DEFAULT_IMAGE_PROVIDER_ID: ImageProviderId = 'auto'
 export const DEFAULT_IMAGE_PIPELINE_ID: ImagePipelineId = 'ultra'
 export const DEFAULT_IMAGE_ASPECT_RATIO_ID: ImageAspectRatioId = '1:1'
 export const DEFAULT_IMAGE_STYLE_PRESET_ID: ImageStylePresetId = 'natural'
