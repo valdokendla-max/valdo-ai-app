@@ -1377,6 +1377,7 @@ export async function POST(req: Request) {
       if (
         selectedProvider.id === 'auto' &&
         !hasReferenceImage &&
+        candidateProvider !== 'replicate' &&
         isBackendCoolingDown(candidateProvider)
       ) {
         continue
