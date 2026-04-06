@@ -287,6 +287,36 @@ export default function ValdoAI() {
   }, [])
 
   useEffect(() => {
+    if (!backendHealth) {
+      return
+    }
+
+    const comfyConnected = backendHealth.comfyui.status === 'connected'
+    const automaticConnected = backendHealth.automatic1111.status === 'connected'
+    const replicateAvailable = backendHealth.replicate.status !== 'missing'
+    const hasConnectedLocalBackend = comfyConnected || automaticConnected
+
+    if (imageProviderId === 'replicate' && !replicateAvailable) {
+      setImageProviderId('auto')
+      return
+    }
+
+    if (imageProviderId === 'comfyui' && !comfyConnected && replicateAvailable) {
+      setImageProviderId('replicate')
+      return
+    }
+
+    if (imageProviderId === 'automatic1111' && !automaticConnected && replicateAvailable) {
+      setImageProviderId('replicate')
+      return
+    }
+
+    if (imageProviderId === 'auto' && !hasConnectedLocalBackend && replicateAvailable) {
+      setImageProviderId('replicate')
+    }
+  }, [backendHealth, imageProviderId])
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return
     }
