@@ -876,7 +876,7 @@ export default function ValdoAI() {
       const message = error instanceof Error ? error.message : 'Pildi loomine ebaõnnestus.'
       setImageStage('failed')
       setActiveImageProviderId(null)
-      setImageError(undefined)
+      setImageError(message)
       setMessages((current) =>
         current.map((entry) =>
           entry.id === placeholderMessage.id

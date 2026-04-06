@@ -32,6 +32,8 @@ const DEFAULT_IMAGE_STYLE_PROMPT =
 const DEFAULT_REPLICATE_MODEL = 'black-forest-labs/flux-schnell'
 const DEFAULT_REPLICATE_ULTRA_MODEL = 'black-forest-labs/flux-dev'
 const POLLINATIONS_BASE_URL = 'https://image.pollinations.ai/prompt'
+const POLLINATIONS_MAX_ATTEMPTS = 3
+const POLLINATIONS_RETRY_DELAY_MS = 1_500
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const ALLOWED_CLIENT_IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const ALLOWED_REPLICATE_IMAGE_HOSTS = ['replicate.delivery', '.replicate.delivery']
@@ -66,6 +68,16 @@ function isReplicateAutoAllowed() {
   }
 
   return configured
+}
+
+function isPollinationsFallbackAllowed() {
+  const explicitFlag = process.env.ALLOW_POLLINATIONS_FALLBACK
+
+  if (explicitFlag === 'false') {
+    return false
+  }
+
+  return true
 }
 
 type ComfyImage = {
@@ -894,27 +906,66 @@ async function createPollinationsImage(
     safe: 'false',
   })
 
-  const response = await fetch(
-    `${POLLINATIONS_BASE_URL}/${encodeURIComponent(prompt)}?${params.toString()}`,
-    {
-      signal,
-      cache: 'no-store',
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt < POLLINATIONS_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await sleep(POLLINATIONS_RETRY_DELAY_MS * attempt)
     }
-  )
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Pollinations error: ${errorText || response.status}`)
+    try {
+      const response = await fetch(
+        `${POLLINATIONS_BASE_URL}/${encodeURIComponent(prompt)}?${params.toString()}`,
+        {
+          signal,
+          cache: 'no-store',
+        }
+      )
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        const retryable =
+          response.status === 429 ||
+          response.status >= 500 ||
+          /queue full|too many requests/i.test(errorText)
+
+        if (retryable && attempt < POLLINATIONS_MAX_ATTEMPTS - 1) {
+          lastError = new Error(`Pollinations error: ${errorText || response.status}`)
+          continue
+        }
+
+        throw new Error(`Pollinations error: ${errorText || response.status}`)
+      }
+
+      const contentType = response.headers.get('content-type') || 'image/jpeg'
+      const buffer = Buffer.from(await response.arrayBuffer())
+
+      if (buffer.byteLength === 0) {
+        throw new Error('Pollinations did not return image bytes.')
+      }
+
+      return `data:${contentType};base64,${buffer.toString('base64')}`
+    } catch (error) {
+      const normalizedError =
+        error instanceof Error ? error : new Error('Pollinations request failed.')
+
+      if (signal.aborted) {
+        throw normalizedError
+      }
+
+      const retryable =
+        /fetch failed|timed out|timeout|too many requests/i.test(normalizedError.message)
+
+      if (retryable && attempt < POLLINATIONS_MAX_ATTEMPTS - 1) {
+        lastError = normalizedError
+        continue
+      }
+
+      throw normalizedError
+    }
   }
 
-  const contentType = response.headers.get('content-type') || 'image/jpeg'
-  const buffer = Buffer.from(await response.arrayBuffer())
-
-  if (buffer.byteLength === 0) {
-    throw new Error('Pollinations did not return image bytes.')
-  }
-
-  return `data:${contentType};base64,${buffer.toString('base64')}`
+  throw lastError ?? new Error('Pollinations image generation failed.')
 }
 
 async function createAutomatic1111Image(
@@ -1118,28 +1169,25 @@ function getAutoProviderOrder(
   }
 
   const allowReplicateAuto = isReplicateAutoAllowed()
+  const allowPollinationsFallback = isPollinationsFallbackAllowed()
+
+  const preferredProviders: RuntimeImageProviderId[] = allowReplicateAuto
+    ? ['comfyui', 'automatic1111', 'replicate']
+    : ['comfyui', 'automatic1111']
+
+  const providersWithFallback = allowPollinationsFallback
+    ? [...preferredProviders, 'pollinations']
+    : preferredProviders
 
   if (pipeline.id === 'ultra') {
-    return sortProvidersForAuto(
-      allowReplicateAuto
-        ? ['comfyui', 'automatic1111', 'replicate']
-        : ['comfyui', 'automatic1111']
-    )
+    return sortProvidersForAuto(providersWithFallback)
   }
 
   if (pipeline.id === 'quality') {
-    return sortProvidersForAuto(
-      allowReplicateAuto
-        ? ['comfyui', 'automatic1111', 'replicate']
-        : ['comfyui', 'automatic1111']
-    )
+    return sortProvidersForAuto(providersWithFallback)
   }
 
-  return sortProvidersForAuto(
-    allowReplicateAuto
-      ? ['comfyui', 'automatic1111', 'replicate']
-      : ['comfyui', 'automatic1111']
-  )
+  return sortProvidersForAuto(providersWithFallback)
 }
 
 function getProviderOrder(
@@ -1436,7 +1484,7 @@ export async function POST(req: Request) {
         if (candidateProvider === 'pollinations') {
           imageDataUrl = await createPollinationsImage(
             optimizedPrompt,
-            createBackendSignal(req.signal, 45000),
+            createBackendSignal(req.signal, 90000),
             selectedPipeline,
             aspectRatioId,
             resolvedSeed
