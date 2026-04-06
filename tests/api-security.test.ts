@@ -107,7 +107,6 @@ test('image POST rejects illegal sexual violence prompts', async () => {
       body: JSON.stringify({
         action: 'generate',
         prompt: 'create a non-consensual explicit scene',
-        adultOnly: true,
       }),
     })
   )

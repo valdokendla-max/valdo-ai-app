@@ -34,7 +34,6 @@ interface HubStatusBarProps {
   imageVariationStrength: number
   activeImageProviderId?: ImageProviderId | null
   imagePipelineId: ImagePipelineId
-  imageAdultOnly: boolean
   enhancePrompt: boolean
   imageStage?: 'idle' | 'starting' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
   backendHealth?: {
@@ -90,7 +89,6 @@ export function HubStatusBar({
   imageVariationStrength,
   activeImageProviderId,
   imagePipelineId,
-  imageAdultOnly,
   enhancePrompt,
   imageStage = 'idle',
   backendHealth,
@@ -179,7 +177,6 @@ export function HubStatusBar({
           <InfoPill value={`Kuvasuhe · ${imageAspectRatio}`} />
           <InfoPill value={`Stiil · ${imageStylePreset}`} />
           <InfoPill value={`Pipeline · ${imagePipeline}`} />
-          <InfoPill value={`Vanus | ${imageAdultOnly ? '18+ ainult' : 'tava'}`} />
           <InfoPill value={imageSeed === null ? 'Seed · auto' : `Seed · ${imageSeed}`} />
           <InfoPill value={`Variatsioon · ${imageVariationStrength}%`} />
           <InfoPill value={`Töötlus · ${enhancePrompt ? '3 sammu' : '1 samm'}`} />
@@ -207,7 +204,6 @@ export function HubStatusBar({
             <StatusChip label="Kuvasuhe" value={imageAspectRatio} />
             <StatusChip label="Stiil" value={imageStylePreset} />
             <StatusChip label="Pipeline" value={imagePipeline} />
-            <StatusChip label="Vanus" value={imageAdultOnly ? '18+ ainult' : 'tava'} />
             <StatusChip label="Seed" value={imageSeed === null ? 'Auto' : String(imageSeed)} />
             <StatusChip label="Variatsioon" value={`${imageVariationStrength}%`} />
             <StatusChip label="Töövoog" value={enhancePrompt ? '3 sammu' : '1 samm'} />

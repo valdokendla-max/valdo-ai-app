@@ -36,8 +36,6 @@ const POLLINATIONS_RETRY_DELAY_MS = 1_500
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const ALLOWED_CLIENT_IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const ALLOWED_REPLICATE_IMAGE_HOSTS = ['replicate.delivery', '.replicate.delivery']
-const ADULT_ONLY_PROMPT_SUFFIX =
-  'adult person, age 25+, fully mature subject, mature facial features'
 const MINOR_SAFETY_NEGATIVE_PROMPT =
   'child, children, kid, kids, teen, teenager, underage, minor, adolescent, infant, toddler, baby face'
 const MINOR_REFERENCE_PATTERN =
@@ -483,7 +481,7 @@ function buildNegativePrompt(stylePresetId?: string) {
 
 function validatePromptSafety(prompt: string) {
   if (MINOR_REFERENCE_PATTERN.test(prompt)) {
-    return 'Prompt viitab alaealisele. Kasuta ainult taisealiste (18+) subjektide kirjeldusi.'
+    return 'Prompt viitab alaealisele. Kasuta ainult taisealiste subjektide kirjeldusi.'
   }
 
   if (ILLEGAL_CONTENT_PATTERN.test(prompt)) {
@@ -491,16 +489,6 @@ function validatePromptSafety(prompt: string) {
   }
 
   return null
-}
-
-function applyAdultOnlyPromptGuard(prompt: string, adultOnly: boolean) {
-  const trimmedPrompt = prompt.trim()
-
-  if (!adultOnly) {
-    return trimmedPrompt
-  }
-
-  return `${trimmedPrompt}, ${ADULT_ONLY_PROMPT_SUFFIX}`
 }
 
 function buildEffectiveNegativePrompt(stylePresetId?: string) {
@@ -1248,7 +1236,6 @@ export async function POST(req: Request) {
     seed?: number | null
     variationStrength?: number
     enhancePrompt?: boolean
-    adultOnly?: boolean
     imageDataUrl?: string
     referenceImageDataUrl?: string
     imageToImageStrength?: number
@@ -1273,7 +1260,6 @@ export async function POST(req: Request) {
     seed,
     variationStrength,
     enhancePrompt,
-    adultOnly,
     imageDataUrl,
     referenceImageDataUrl,
     imageToImageStrength,
@@ -1323,7 +1309,6 @@ export async function POST(req: Request) {
     const selectedPipeline = getImagePipeline(pipelineId)
     const shouldEnhance = enhancePrompt !== false
     const trimmedPrompt = prompt?.trim() || ''
-    const adultOnlyEnabled = adultOnly === true
     const promptSafetyError = validatePromptSafety(trimmedPrompt)
 
     if (promptSafetyError) {
@@ -1333,7 +1318,7 @@ export async function POST(req: Request) {
       })
     }
 
-    const effectivePrompt = applyAdultOnlyPromptGuard(trimmedPrompt, adultOnlyEnabled)
+    const effectivePrompt = trimmedPrompt
     const resolvedSeed = resolveImageSeed(seed, variationStrength)
     const negativePrompt = buildEffectiveNegativePrompt(stylePresetId)
     const hasReferenceImage = Boolean(referenceImageDataUrl?.trim())

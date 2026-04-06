@@ -31,7 +31,6 @@ interface HubControlsProps {
   imageSeed: number | null
   imageVariationStrength: number
   imagePipelineId: ImagePipelineId
-  imageAdultOnly: boolean
   enhancePrompt: boolean
   backendHealth?: {
     automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
@@ -46,7 +45,6 @@ interface HubControlsProps {
   onImageSeedChange: (value: number | null) => void
   onImageVariationStrengthChange: (value: number) => void
   onImagePipelineChange: (value: ImagePipelineId) => void
-  onImageAdultOnlyChange: (value: boolean) => void
   onEnhancePromptChange: (value: boolean) => void
 }
 
@@ -63,7 +61,6 @@ export function HubControls({
   imageSeed,
   imageVariationStrength,
   imagePipelineId,
-  imageAdultOnly,
   enhancePrompt,
   backendHealth,
   onTextModelChange,
@@ -74,7 +71,6 @@ export function HubControls({
   onImageSeedChange,
   onImageVariationStrengthChange,
   onImagePipelineChange,
-  onImageAdultOnlyChange,
   onEnhancePromptChange,
 }: HubControlsProps) {
   const availableImageProviders = IMAGE_PROVIDERS.filter((provider) => {
@@ -244,23 +240,6 @@ export function HubControls({
                 : 'Seadistatud seed hoiab kompositsiooni stabiilsemana; variatsioon lisab kontrollitud erinevust.'}
             </span>
           </label>
-
-          <button
-            type="button"
-            onClick={() => onImageAdultOnlyChange(!imageAdultOnly)}
-            className={`sm:col-span-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-              imageAdultOnly
-                ? 'border-primary/40 bg-primary/10 text-foreground'
-                : 'border-border bg-card/70 text-muted-foreground'
-            }`}
-          >
-            <span className="block font-medium">18+ ainult subjektid</span>
-            <span className="block text-[11px] opacity-80">
-              {imageAdultOnly
-                ? 'Promptile lisatakse taisealise subjekti kaitsekontekst.'
-                : 'Vanusekonteksti ei lisata automaatselt.'}
-            </span>
-          </button>
 
           <button
             type="button"

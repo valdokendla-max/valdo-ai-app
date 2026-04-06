@@ -38,7 +38,6 @@ export type ConversationSettings = {
   imageToImageStrength: number
   imagePipelineId: ImagePipelineId
   enhancePrompt: boolean
-  imageAdultOnly: boolean
 }
 
 export type StoredConversation = {
@@ -72,7 +71,6 @@ export function createDefaultConversationSettings(): ConversationSettings {
     imageToImageStrength: 45,
     imagePipelineId: DEFAULT_IMAGE_PIPELINE_ID,
     enhancePrompt: true,
-    imageAdultOnly: false,
   }
 }
 
@@ -106,8 +104,6 @@ function normalizeConversationSettings(rawValue: unknown): ConversationSettings 
     imagePipelineId: raw.imagePipelineId ?? defaults.imagePipelineId,
     enhancePrompt:
       typeof raw.enhancePrompt === 'boolean' ? raw.enhancePrompt : defaults.enhancePrompt,
-    imageAdultOnly:
-      typeof raw.imageAdultOnly === 'boolean' ? raw.imageAdultOnly : defaults.imageAdultOnly,
   }
 }
 
