@@ -4,21 +4,18 @@ import {
   DEFAULT_IMAGE_ASPECT_RATIO_ID,
   DEFAULT_IMAGE_PIPELINE_ID,
   DEFAULT_IMAGE_PROVIDER_ID,
-  DEFAULT_IMAGE_SAFETY_MODE_ID,
   DEFAULT_PROMPT_PROFILE_ID,
   DEFAULT_TEXT_MODEL_ID,
   DEFAULT_IMAGE_STYLE_PRESET_ID,
   IMAGE_ASPECT_RATIOS,
   IMAGE_PIPELINES,
   IMAGE_PROVIDERS,
-  IMAGE_SAFETY_MODES,
   IMAGE_STYLE_PRESETS,
   PROMPT_PROFILES,
   TEXT_MODELS,
   type ImageAspectRatioId,
   type ImagePipelineId,
   type ImageProviderId,
-  type ImageSafetyModeId,
   type ImageStylePresetId,
   type PromptProfileId,
   type TextModelId,
@@ -35,7 +32,6 @@ interface HubControlsProps {
   imageVariationStrength: number
   imagePipelineId: ImagePipelineId
   imageAdultOnly: boolean
-  imageSafetyModeId: ImageSafetyModeId
   enhancePrompt: boolean
   backendHealth?: {
     automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
@@ -51,7 +47,6 @@ interface HubControlsProps {
   onImageVariationStrengthChange: (value: number) => void
   onImagePipelineChange: (value: ImagePipelineId) => void
   onImageAdultOnlyChange: (value: boolean) => void
-  onImageSafetyModeChange: (value: ImageSafetyModeId) => void
   onEnhancePromptChange: (value: boolean) => void
 }
 
@@ -69,7 +64,6 @@ export function HubControls({
   imageVariationStrength,
   imagePipelineId,
   imageAdultOnly,
-  imageSafetyModeId,
   enhancePrompt,
   backendHealth,
   onTextModelChange,
@@ -81,7 +75,6 @@ export function HubControls({
   onImageVariationStrengthChange,
   onImagePipelineChange,
   onImageAdultOnlyChange,
-  onImageSafetyModeChange,
   onEnhancePromptChange,
 }: HubControlsProps) {
   const availableImageProviders = IMAGE_PROVIDERS.filter((provider) => {
@@ -134,11 +127,6 @@ export function HubControls({
   const quaternaryDescription = isImageMode
     ? IMAGE_STYLE_PRESETS.find((preset) => preset.id === imageStylePresetId)?.description ||
       IMAGE_STYLE_PRESETS.find((preset) => preset.id === DEFAULT_IMAGE_STYLE_PRESET_ID)?.description
-    : null
-
-  const quinaryDescription = isImageMode
-    ? IMAGE_SAFETY_MODES.find((mode) => mode.id === imageSafetyModeId)?.description ||
-      IMAGE_SAFETY_MODES.find((mode) => mode.id === DEFAULT_IMAGE_SAFETY_MODE_ID)?.description
     : null
 
   return (
@@ -232,25 +220,6 @@ export function HubControls({
               placeholder="Juhuslik"
               className={baseSelectClassName}
             />
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-              Turvareziim
-            </span>
-            <select
-              value={imageSafetyModeId}
-              onChange={(event) =>
-                onImageSafetyModeChange(event.target.value as ImageSafetyModeId)
-              }
-              className={baseSelectClassName}
-            >
-              {IMAGE_SAFETY_MODES.map((mode) => (
-                <option key={mode.id} value={mode.id}>
-                  {mode.label}
-                </option>
-              ))}
-            </select>
           </label>
 
           <label className="flex flex-col gap-1 sm:col-span-2">
@@ -354,7 +323,6 @@ export function HubControls({
         {secondaryDescription}
         {tertiaryDescription ? ` | ${tertiaryDescription}` : ''}
         {quaternaryDescription ? ` | ${quaternaryDescription}` : ''}
-        {quinaryDescription ? ` | ${quinaryDescription}` : ''}
       </div>
     </div>
   )

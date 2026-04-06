@@ -16,8 +16,6 @@ export type ImageStylePresetId =
   | 'product'
   | 'logo'
 
-export type ImageSafetyModeId = 'strict' | 'balanced'
-
 export const TEXT_MODELS = [
   {
     id: 'llama-3.3-70b' as const,
@@ -240,26 +238,12 @@ export const IMAGE_STYLE_PRESETS = [
   },
 ] as const
 
-export const IMAGE_SAFETY_MODES = [
-  {
-    id: 'strict' as const,
-    label: 'Strict',
-    description: 'Blokeerib riskantsed ja selgesonaliselt seksuaalsed promptid',
-  },
-  {
-    id: 'balanced' as const,
-    label: 'Balanced',
-    description: 'Hoiab alaealiste ja ebaseadusliku sisu blokeerituna',
-  },
-] as const
-
 export const DEFAULT_TEXT_MODEL_ID: TextModelId = 'llama-3.3-70b'
 export const DEFAULT_PROMPT_PROFILE_ID: PromptProfileId = 'balanced'
-export const DEFAULT_IMAGE_PROVIDER_ID: ImageProviderId = 'auto'
+export const DEFAULT_IMAGE_PROVIDER_ID: ImageProviderId = 'comfyui'
 export const DEFAULT_IMAGE_PIPELINE_ID: ImagePipelineId = 'ultra'
 export const DEFAULT_IMAGE_ASPECT_RATIO_ID: ImageAspectRatioId = '1:1'
 export const DEFAULT_IMAGE_STYLE_PRESET_ID: ImageStylePresetId = 'natural'
-export const DEFAULT_IMAGE_SAFETY_MODE_ID: ImageSafetyModeId = 'strict'
 
 export function getTextModel(modelId?: string) {
   return TEXT_MODELS.find((model) => model.id === modelId) ?? TEXT_MODELS[0]
@@ -310,12 +294,4 @@ export function getDimensionsForAspectRatio(
 
 export function getImageStylePreset(stylePresetId?: string) {
   return IMAGE_STYLE_PRESETS.find((preset) => preset.id === stylePresetId) ?? IMAGE_STYLE_PRESETS[0]
-}
-
-export function getImageSafetyMode(safetyModeId?: string) {
-  return (
-    IMAGE_SAFETY_MODES.find((mode) => mode.id === safetyModeId) ??
-    IMAGE_SAFETY_MODES.find((mode) => mode.id === DEFAULT_IMAGE_SAFETY_MODE_ID) ??
-    IMAGE_SAFETY_MODES[0]
-  )
 }

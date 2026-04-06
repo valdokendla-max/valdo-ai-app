@@ -88,7 +88,6 @@ test('image POST rejects prompts that reference minors', async () => {
       body: JSON.stringify({
         action: 'generate',
         prompt: 'create a detailed portrait of a teenage girl',
-        safetyModeId: 'balanced',
       }),
     })
   )
@@ -98,7 +97,7 @@ test('image POST rejects prompts that reference minors', async () => {
   assert.match(String(data.error), /alaealis|minor/i)
 })
 
-test('image POST strict mode rejects explicit sexual prompts', async () => {
+test('image POST rejects illegal sexual violence prompts', async () => {
   const response = await imagePost(
     new Request('http://localhost/api/image', {
       method: 'POST',
@@ -107,16 +106,15 @@ test('image POST strict mode rejects explicit sexual prompts', async () => {
       },
       body: JSON.stringify({
         action: 'generate',
-        prompt: 'adult explicit sex scene with porn framing',
+        prompt: 'create a non-consensual explicit scene',
         adultOnly: true,
-        safetyModeId: 'strict',
       }),
     })
   )
   const data = await response.json()
 
   assert.equal(response.status, 400)
-  assert.match(String(data.error), /strict|seksuaalsed|sexual/i)
+  assert.match(String(data.error), /keelatud|ebaseaduslik|illegal/i)
 })
 
 test('KnowledgeStore persists items to file fallback', async () => {

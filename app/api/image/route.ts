@@ -5,7 +5,6 @@ import {
   getDimensionsForAspectRatio,
   getImagePipeline,
   getImageProvider,
-  getImageSafetyMode,
   getImageStylePreset,
 } from '@/lib/ai-hub'
 import {
@@ -41,22 +40,15 @@ const ADULT_ONLY_PROMPT_SUFFIX =
   'adult person, age 25+, fully mature subject, mature facial features'
 const MINOR_SAFETY_NEGATIVE_PROMPT =
   'child, children, kid, kids, teen, teenager, underage, minor, adolescent, infant, toddler, baby face'
-const STRICT_SAFETY_NEGATIVE_PROMPT =
-  'explicit sexual act, pornographic framing, explicit nudity focus, genital focus'
 const MINOR_REFERENCE_PATTERN =
   /\b(child(?:ren)?|kid(?:s)?|teen(?:ager)?s?|teenage|underage|minor(?:s)?|preteen|schoolgirl|schoolboy|loli|lolicon|shota)\b/i
 const ILLEGAL_CONTENT_PATTERN =
   /\b(rape|raping|non[-\s]?consensual|incest|bestiality)\b/i
-const STRICT_SEXUAL_CONTENT_PATTERN =
-  /\b(porn(?:ography)?|xxx|explicit\s+sex|sexual\s+intercourse|blowjob|anal\s+sex|penetration|cumshot|genitals?)\b/i
-
-type ImageSafetyMode = 'strict' | 'balanced'
 
 const IMAGE_PROMPT_SYSTEM =
   'You optimize prompts for high-end text-to-image models. Rewrite the user request into one concise but richly descriptive English prompt. Preserve the exact requested subject, action, scene, camera angle, mood, clothing, colors, material details, and composition. Translate Estonian or mixed-language requests into natural English. Strengthen only image-relevant quality cues such as lighting, lens/framing, depth, anatomy, textures, separation, and scene coherence. Respect any provided style preset, aspect ratio, and quality target. Do not add unrelated objects, story details, extra characters, text overlays, watermarks, or brand names unless explicitly requested. Return only the final prompt, with no quotes, labels, bullets, or markdown.'
 
 function isReplicateAutoAllowed() {
-  const configured = Boolean(process.env.REPLICATE_API_TOKEN)
   const explicitFlag = process.env.ALLOW_REPLICATE_AUTO
 
   if (explicitFlag === 'false') {
@@ -67,7 +59,7 @@ function isReplicateAutoAllowed() {
     return true
   }
 
-  return configured
+  return false
 }
 
 function isPollinationsFallbackAllowed() {
@@ -489,22 +481,13 @@ function buildNegativePrompt(stylePresetId?: string) {
   return `${DEFAULT_NEGATIVE_PROMPT}, ${stylePreset.negativePrompt}`
 }
 
-function normalizeSafetyMode(safetyModeId?: string): ImageSafetyMode {
-  const selectedMode = getImageSafetyMode(safetyModeId)
-  return selectedMode.id
-}
-
-function validatePromptSafety(prompt: string, safetyMode: ImageSafetyMode) {
+function validatePromptSafety(prompt: string) {
   if (MINOR_REFERENCE_PATTERN.test(prompt)) {
     return 'Prompt viitab alaealisele. Kasuta ainult taisealiste (18+) subjektide kirjeldusi.'
   }
 
   if (ILLEGAL_CONTENT_PATTERN.test(prompt)) {
     return 'Prompt sisaldab keelatud voi ebaseaduslikku sisusoovi.'
-  }
-
-  if (safetyMode === 'strict' && STRICT_SEXUAL_CONTENT_PATTERN.test(prompt)) {
-    return 'Strict turvareziim blokeerib selgesonaliselt seksuaalsed promptid.'
   }
 
   return null
@@ -520,17 +503,8 @@ function applyAdultOnlyPromptGuard(prompt: string, adultOnly: boolean) {
   return `${trimmedPrompt}, ${ADULT_ONLY_PROMPT_SUFFIX}`
 }
 
-function buildEffectiveNegativePrompt(
-  stylePresetId: string | undefined,
-  safetyMode: ImageSafetyMode
-) {
-  const parts = [buildNegativePrompt(stylePresetId), MINOR_SAFETY_NEGATIVE_PROMPT]
-
-  if (safetyMode === 'strict') {
-    parts.push(STRICT_SAFETY_NEGATIVE_PROMPT)
-  }
-
-  return parts.join(', ')
+function buildEffectiveNegativePrompt(stylePresetId?: string) {
+  return [buildNegativePrompt(stylePresetId), MINOR_SAFETY_NEGATIVE_PROMPT].join(', ')
 }
 
 function resolveImageSeed(seed?: number | null, variationStrength?: number) {
@@ -1175,7 +1149,7 @@ function getAutoProviderOrder(
     ? ['comfyui', 'automatic1111', 'replicate']
     : ['comfyui', 'automatic1111']
 
-  const providersWithFallback = allowPollinationsFallback
+  const providersWithFallback: RuntimeImageProviderId[] = allowPollinationsFallback
     ? [...preferredProviders, 'pollinations']
     : preferredProviders
 
@@ -1275,7 +1249,6 @@ export async function POST(req: Request) {
     variationStrength?: number
     enhancePrompt?: boolean
     adultOnly?: boolean
-    safetyModeId?: ImageSafetyMode
     imageDataUrl?: string
     referenceImageDataUrl?: string
     imageToImageStrength?: number
@@ -1301,7 +1274,6 @@ export async function POST(req: Request) {
     variationStrength,
     enhancePrompt,
     adultOnly,
-    safetyModeId,
     imageDataUrl,
     referenceImageDataUrl,
     imageToImageStrength,
@@ -1351,9 +1323,8 @@ export async function POST(req: Request) {
     const selectedPipeline = getImagePipeline(pipelineId)
     const shouldEnhance = enhancePrompt !== false
     const trimmedPrompt = prompt?.trim() || ''
-    const safetyMode = normalizeSafetyMode(safetyModeId)
     const adultOnlyEnabled = adultOnly === true
-    const promptSafetyError = validatePromptSafety(trimmedPrompt, safetyMode)
+    const promptSafetyError = validatePromptSafety(trimmedPrompt)
 
     if (promptSafetyError) {
       return new Response(JSON.stringify({ error: promptSafetyError }), {
@@ -1364,7 +1335,7 @@ export async function POST(req: Request) {
 
     const effectivePrompt = applyAdultOnlyPromptGuard(trimmedPrompt, adultOnlyEnabled)
     const resolvedSeed = resolveImageSeed(seed, variationStrength)
-    const negativePrompt = buildEffectiveNegativePrompt(stylePresetId, safetyMode)
+    const negativePrompt = buildEffectiveNegativePrompt(stylePresetId)
     const hasReferenceImage = Boolean(referenceImageDataUrl?.trim())
 
     if (referenceImageDataUrl) {

@@ -40,7 +40,6 @@ export const imageRequestSchema = z
     variationStrength: z.number().min(0).max(100).optional(),
     enhancePrompt: z.boolean().optional(),
     adultOnly: z.boolean().optional(),
-    safetyModeId: z.enum(['strict', 'balanced']).optional(),
     imageDataUrl: z.string().max(MAX_IMAGE_DATA_URL_LENGTH).optional(),
     referenceImageDataUrl: z.string().max(MAX_IMAGE_DATA_URL_LENGTH).optional(),
     imageToImageStrength: z.number().min(0).max(100).optional(),

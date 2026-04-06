@@ -4,14 +4,12 @@ import {
   IMAGE_ASPECT_RATIOS,
   IMAGE_PROVIDERS,
   IMAGE_PIPELINES,
-  IMAGE_SAFETY_MODES,
   IMAGE_STYLE_PRESETS,
   PROMPT_PROFILES,
   TEXT_MODELS,
   type ImageAspectRatioId,
   type ImagePipelineId,
   type ImageProviderId,
-  type ImageSafetyModeId,
   type ImageStylePresetId,
   type PromptProfileId,
   type TextModelId,
@@ -37,7 +35,6 @@ interface HubStatusBarProps {
   activeImageProviderId?: ImageProviderId | null
   imagePipelineId: ImagePipelineId
   imageAdultOnly: boolean
-  imageSafetyModeId: ImageSafetyModeId
   enhancePrompt: boolean
   imageStage?: 'idle' | 'starting' | 'queued' | 'running' | 'enhancing' | 'done' | 'failed'
   backendHealth?: {
@@ -94,7 +91,6 @@ export function HubStatusBar({
   activeImageProviderId,
   imagePipelineId,
   imageAdultOnly,
-  imageSafetyModeId,
   enhancePrompt,
   imageStage = 'idle',
   backendHealth,
@@ -114,8 +110,6 @@ export function HubStatusBar({
     imageStylePresetId
   const imagePipeline =
     IMAGE_PIPELINES.find((pipeline) => pipeline.id === imagePipelineId)?.label || imagePipelineId
-  const imageSafetyMode =
-    IMAGE_SAFETY_MODES.find((mode) => mode.id === imageSafetyModeId)?.label || imageSafetyModeId
   const selectedImageProvider =
     IMAGE_PROVIDERS.find((provider) => provider.id === imageProviderId)?.label || imageProviderId
   const activeImageProvider =
@@ -125,7 +119,7 @@ export function HubStatusBar({
     imageProviderId === 'auto' ? activeImageProviderId || null : imageProviderId
   const backendCostLabel = getBackendCostLabel(resolvedDisplayProviderId)
   const showsFailoverBadge =
-    imageProviderId === 'auto' && Boolean(activeImageProviderId) && activeImageProviderId !== 'automatic1111'
+    imageProviderId === 'auto' && Boolean(activeImageProviderId) && activeImageProviderId !== 'comfyui'
 
   const imageStageLabelMap = {
     idle: 'Valmis',
@@ -185,7 +179,6 @@ export function HubStatusBar({
           <InfoPill value={`Kuvasuhe · ${imageAspectRatio}`} />
           <InfoPill value={`Stiil · ${imageStylePreset}`} />
           <InfoPill value={`Pipeline · ${imagePipeline}`} />
-          <InfoPill value={`Turvareziim | ${imageSafetyMode}`} />
           <InfoPill value={`Vanus | ${imageAdultOnly ? '18+ ainult' : 'tava'}`} />
           <InfoPill value={imageSeed === null ? 'Seed · auto' : `Seed · ${imageSeed}`} />
           <InfoPill value={`Variatsioon · ${imageVariationStrength}%`} />
@@ -214,7 +207,6 @@ export function HubStatusBar({
             <StatusChip label="Kuvasuhe" value={imageAspectRatio} />
             <StatusChip label="Stiil" value={imageStylePreset} />
             <StatusChip label="Pipeline" value={imagePipeline} />
-            <StatusChip label="Turvareziim" value={imageSafetyMode} />
             <StatusChip label="Vanus" value={imageAdultOnly ? '18+ ainult' : 'tava'} />
             <StatusChip label="Seed" value={imageSeed === null ? 'Auto' : String(imageSeed)} />
             <StatusChip label="Variatsioon" value={`${imageVariationStrength}%`} />
