@@ -4,7 +4,7 @@ export type PromptProfileId = 'balanced' | 'precise' | 'creative'
 
 export type ImageProviderId = 'auto' | 'automatic1111' | 'comfyui' | 'replicate'
 
-export type ImagePipelineId = 'fast' | 'balanced' | 'quality'
+export type ImagePipelineId = 'fast' | 'balanced' | 'quality' | 'ultra'
 
 export type ImageAspectRatioId = '1:1' | '4:5' | '3:2' | '16:9'
 
@@ -15,6 +15,8 @@ export type ImageStylePresetId =
   | 'anime'
   | 'product'
   | 'logo'
+
+export type ImageSafetyModeId = 'strict' | 'balanced'
 
 export const TEXT_MODELS = [
   {
@@ -61,7 +63,7 @@ export const IMAGE_PROVIDERS = [
   {
     id: 'auto' as const,
     label: 'Auto (failover)',
-    description: 'Proovib esmalt peamist backendit ja kukkumisel liigub varuvariandile',
+    description: 'Eelistab lokaalset ComfyUI rada ja kasutab muid backendeid ainult varuna',
   },
   {
     id: 'automatic1111' as const,
@@ -76,7 +78,7 @@ export const IMAGE_PROVIDERS = [
   {
     id: 'replicate' as const,
     label: 'Replicate',
-    description: 'Pilvepõhine varubackend pildigeneratsiooniks',
+    description: 'Tasuline pilvebackend pildigeneratsiooniks, kasuta teadlikult',
   },
 ] as const
 
@@ -132,6 +134,26 @@ export const IMAGE_PIPELINES = [
       height: 832,
       steps: 28,
       cfg: 5.5,
+      sampler: 'dpmpp_2m',
+      scheduler: 'karras',
+    },
+    replicate: {
+      aspectRatio: '1:1',
+      outputQuality: 100,
+    },
+  },
+  {
+    id: 'ultra' as const,
+    label: 'Ultra Quality',
+    description: 'Parim saadaolev kvaliteet, aeglasem ja rangemate fallbackidega',
+    promptStyle:
+      'ultra detailed, premium composition, refined lighting, believable depth, precise anatomy, rich material rendering, exceptional micro-contrast, polished cinematic finish',
+    upscaleFactor: 4,
+    comfy: {
+      width: 1024,
+      height: 1024,
+      steps: 40,
+      cfg: 6,
       sampler: 'dpmpp_2m',
       scheduler: 'karras',
     },
@@ -218,12 +240,26 @@ export const IMAGE_STYLE_PRESETS = [
   },
 ] as const
 
+export const IMAGE_SAFETY_MODES = [
+  {
+    id: 'strict' as const,
+    label: 'Strict',
+    description: 'Blokeerib riskantsed ja selgesonaliselt seksuaalsed promptid',
+  },
+  {
+    id: 'balanced' as const,
+    label: 'Balanced',
+    description: 'Hoiab alaealiste ja ebaseadusliku sisu blokeerituna',
+  },
+] as const
+
 export const DEFAULT_TEXT_MODEL_ID: TextModelId = 'llama-3.3-70b'
 export const DEFAULT_PROMPT_PROFILE_ID: PromptProfileId = 'balanced'
-export const DEFAULT_IMAGE_PROVIDER_ID: ImageProviderId = 'auto'
-export const DEFAULT_IMAGE_PIPELINE_ID: ImagePipelineId = 'quality'
+export const DEFAULT_IMAGE_PROVIDER_ID: ImageProviderId = 'comfyui'
+export const DEFAULT_IMAGE_PIPELINE_ID: ImagePipelineId = 'ultra'
 export const DEFAULT_IMAGE_ASPECT_RATIO_ID: ImageAspectRatioId = '1:1'
 export const DEFAULT_IMAGE_STYLE_PRESET_ID: ImageStylePresetId = 'natural'
+export const DEFAULT_IMAGE_SAFETY_MODE_ID: ImageSafetyModeId = 'strict'
 
 export function getTextModel(modelId?: string) {
   return TEXT_MODELS.find((model) => model.id === modelId) ?? TEXT_MODELS[0]
@@ -234,11 +270,19 @@ export function getPromptProfile(profileId?: string) {
 }
 
 export function getImageProvider(providerId?: string) {
-  return IMAGE_PROVIDERS.find((provider) => provider.id === providerId) ?? IMAGE_PROVIDERS[0]
+  return (
+    IMAGE_PROVIDERS.find((provider) => provider.id === providerId) ??
+    IMAGE_PROVIDERS.find((provider) => provider.id === DEFAULT_IMAGE_PROVIDER_ID) ??
+    IMAGE_PROVIDERS[0]
+  )
 }
 
 export function getImagePipeline(pipelineId?: string) {
-  return IMAGE_PIPELINES.find((pipeline) => pipeline.id === pipelineId) ?? IMAGE_PIPELINES[1]
+  return (
+    IMAGE_PIPELINES.find((pipeline) => pipeline.id === pipelineId) ??
+    IMAGE_PIPELINES.find((pipeline) => pipeline.id === DEFAULT_IMAGE_PIPELINE_ID) ??
+    IMAGE_PIPELINES[0]
+  )
 }
 
 export function getImageAspectRatio(aspectRatioId?: string) {
@@ -266,4 +310,12 @@ export function getDimensionsForAspectRatio(
 
 export function getImageStylePreset(stylePresetId?: string) {
   return IMAGE_STYLE_PRESETS.find((preset) => preset.id === stylePresetId) ?? IMAGE_STYLE_PRESETS[0]
+}
+
+export function getImageSafetyMode(safetyModeId?: string) {
+  return (
+    IMAGE_SAFETY_MODES.find((mode) => mode.id === safetyModeId) ??
+    IMAGE_SAFETY_MODES.find((mode) => mode.id === DEFAULT_IMAGE_SAFETY_MODE_ID) ??
+    IMAGE_SAFETY_MODES[0]
+  )
 }

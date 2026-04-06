@@ -3,12 +3,14 @@ import {
   DEFAULT_IMAGE_ASPECT_RATIO_ID,
   DEFAULT_IMAGE_PIPELINE_ID,
   DEFAULT_IMAGE_PROVIDER_ID,
+  DEFAULT_IMAGE_SAFETY_MODE_ID,
   DEFAULT_PROMPT_PROFILE_ID,
   DEFAULT_IMAGE_STYLE_PRESET_ID,
   DEFAULT_TEXT_MODEL_ID,
   type ImageAspectRatioId,
   type ImagePipelineId,
   type ImageProviderId,
+  type ImageSafetyModeId,
   type ImageStylePresetId,
   type PromptProfileId,
   type TextModelId,
@@ -38,6 +40,8 @@ export type ConversationSettings = {
   imageToImageStrength: number
   imagePipelineId: ImagePipelineId
   enhancePrompt: boolean
+  imageAdultOnly: boolean
+  imageSafetyModeId: ImageSafetyModeId
 }
 
 export type StoredConversation = {
@@ -71,6 +75,8 @@ export function createDefaultConversationSettings(): ConversationSettings {
     imageToImageStrength: 45,
     imagePipelineId: DEFAULT_IMAGE_PIPELINE_ID,
     enhancePrompt: true,
+    imageAdultOnly: false,
+    imageSafetyModeId: DEFAULT_IMAGE_SAFETY_MODE_ID,
   }
 }
 
@@ -104,6 +110,12 @@ function normalizeConversationSettings(rawValue: unknown): ConversationSettings 
     imagePipelineId: raw.imagePipelineId ?? defaults.imagePipelineId,
     enhancePrompt:
       typeof raw.enhancePrompt === 'boolean' ? raw.enhancePrompt : defaults.enhancePrompt,
+    imageAdultOnly:
+      typeof raw.imageAdultOnly === 'boolean' ? raw.imageAdultOnly : defaults.imageAdultOnly,
+    imageSafetyModeId:
+      raw.imageSafetyModeId === 'balanced' || raw.imageSafetyModeId === 'strict'
+        ? raw.imageSafetyModeId
+        : defaults.imageSafetyModeId,
   }
 }
 

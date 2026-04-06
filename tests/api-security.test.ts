@@ -78,6 +78,47 @@ test('image POST returns 400 for missing prompt in generate mode', async () => {
   assert.match(String(data.error), /prompt/i)
 })
 
+test('image POST rejects prompts that reference minors', async () => {
+  const response = await imagePost(
+    new Request('http://localhost/api/image', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'generate',
+        prompt: 'create a detailed portrait of a teenage girl',
+        safetyModeId: 'balanced',
+      }),
+    })
+  )
+  const data = await response.json()
+
+  assert.equal(response.status, 400)
+  assert.match(String(data.error), /alaealis|minor/i)
+})
+
+test('image POST strict mode rejects explicit sexual prompts', async () => {
+  const response = await imagePost(
+    new Request('http://localhost/api/image', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'generate',
+        prompt: 'adult explicit sex scene with porn framing',
+        adultOnly: true,
+        safetyModeId: 'strict',
+      }),
+    })
+  )
+  const data = await response.json()
+
+  assert.equal(response.status, 400)
+  assert.match(String(data.error), /strict|seksuaalsed|sexual/i)
+})
+
 test('KnowledgeStore persists items to file fallback', async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'valdo-knowledge-store-'))
   const filePath = path.join(tempDir, 'knowledge-store.json')

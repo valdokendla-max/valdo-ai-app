@@ -4,18 +4,21 @@ import {
   DEFAULT_IMAGE_ASPECT_RATIO_ID,
   DEFAULT_IMAGE_PIPELINE_ID,
   DEFAULT_IMAGE_PROVIDER_ID,
+  DEFAULT_IMAGE_SAFETY_MODE_ID,
   DEFAULT_PROMPT_PROFILE_ID,
   DEFAULT_TEXT_MODEL_ID,
   DEFAULT_IMAGE_STYLE_PRESET_ID,
   IMAGE_ASPECT_RATIOS,
   IMAGE_PIPELINES,
   IMAGE_PROVIDERS,
+  IMAGE_SAFETY_MODES,
   IMAGE_STYLE_PRESETS,
   PROMPT_PROFILES,
   TEXT_MODELS,
   type ImageAspectRatioId,
   type ImagePipelineId,
   type ImageProviderId,
+  type ImageSafetyModeId,
   type ImageStylePresetId,
   type PromptProfileId,
   type TextModelId,
@@ -31,6 +34,8 @@ interface HubControlsProps {
   imageSeed: number | null
   imageVariationStrength: number
   imagePipelineId: ImagePipelineId
+  imageAdultOnly: boolean
+  imageSafetyModeId: ImageSafetyModeId
   enhancePrompt: boolean
   backendHealth?: {
     automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
@@ -45,6 +50,8 @@ interface HubControlsProps {
   onImageSeedChange: (value: number | null) => void
   onImageVariationStrengthChange: (value: number) => void
   onImagePipelineChange: (value: ImagePipelineId) => void
+  onImageAdultOnlyChange: (value: boolean) => void
+  onImageSafetyModeChange: (value: ImageSafetyModeId) => void
   onEnhancePromptChange: (value: boolean) => void
 }
 
@@ -61,6 +68,8 @@ export function HubControls({
   imageSeed,
   imageVariationStrength,
   imagePipelineId,
+  imageAdultOnly,
+  imageSafetyModeId,
   enhancePrompt,
   backendHealth,
   onTextModelChange,
@@ -71,6 +80,8 @@ export function HubControls({
   onImageSeedChange,
   onImageVariationStrengthChange,
   onImagePipelineChange,
+  onImageAdultOnlyChange,
+  onImageSafetyModeChange,
   onEnhancePromptChange,
 }: HubControlsProps) {
   const availableImageProviders = IMAGE_PROVIDERS.filter((provider) => {
@@ -123,6 +134,11 @@ export function HubControls({
   const quaternaryDescription = isImageMode
     ? IMAGE_STYLE_PRESETS.find((preset) => preset.id === imageStylePresetId)?.description ||
       IMAGE_STYLE_PRESETS.find((preset) => preset.id === DEFAULT_IMAGE_STYLE_PRESET_ID)?.description
+    : null
+
+  const quinaryDescription = isImageMode
+    ? IMAGE_SAFETY_MODES.find((mode) => mode.id === imageSafetyModeId)?.description ||
+      IMAGE_SAFETY_MODES.find((mode) => mode.id === DEFAULT_IMAGE_SAFETY_MODE_ID)?.description
     : null
 
   return (
@@ -218,6 +234,25 @@ export function HubControls({
             />
           </label>
 
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Turvareziim
+            </span>
+            <select
+              value={imageSafetyModeId}
+              onChange={(event) =>
+                onImageSafetyModeChange(event.target.value as ImageSafetyModeId)
+              }
+              className={baseSelectClassName}
+            >
+              {IMAGE_SAFETY_MODES.map((mode) => (
+                <option key={mode.id} value={mode.id}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <label className="flex flex-col gap-1 sm:col-span-2">
             <span className="flex items-center justify-between text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
               <span>Variatsioon</span>
@@ -240,6 +275,23 @@ export function HubControls({
                 : 'Seadistatud seed hoiab kompositsiooni stabiilsemana; variatsioon lisab kontrollitud erinevust.'}
             </span>
           </label>
+
+          <button
+            type="button"
+            onClick={() => onImageAdultOnlyChange(!imageAdultOnly)}
+            className={`sm:col-span-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+              imageAdultOnly
+                ? 'border-primary/40 bg-primary/10 text-foreground'
+                : 'border-border bg-card/70 text-muted-foreground'
+            }`}
+          >
+            <span className="block font-medium">18+ ainult subjektid</span>
+            <span className="block text-[11px] opacity-80">
+              {imageAdultOnly
+                ? 'Promptile lisatakse taisealise subjekti kaitsekontekst.'
+                : 'Vanusekonteksti ei lisata automaatselt.'}
+            </span>
+          </button>
 
           <button
             type="button"
@@ -297,10 +349,14 @@ export function HubControls({
       )}
 
       <div className="sm:col-span-2 rounded-lg bg-background/40 px-3 py-1.5 text-[11px] text-muted-foreground">
-        {primaryDescription} {' · '} {secondaryDescription}
-        {tertiaryDescription ? ` · ${tertiaryDescription}` : ''}
-        {quaternaryDescription ? ` · ${quaternaryDescription}` : ''}
+        {primaryDescription}
+        {' | '}
+        {secondaryDescription}
+        {tertiaryDescription ? ` | ${tertiaryDescription}` : ''}
+        {quaternaryDescription ? ` | ${quaternaryDescription}` : ''}
+        {quinaryDescription ? ` | ${quinaryDescription}` : ''}
       </div>
     </div>
   )
 }
+

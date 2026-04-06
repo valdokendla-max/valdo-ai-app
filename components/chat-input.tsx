@@ -14,6 +14,7 @@ import type {
   ImageAspectRatioId,
   ImagePipelineId,
   ImageProviderId,
+  ImageSafetyModeId,
   ImageStylePresetId,
   PromptProfileId,
   TextModelId,
@@ -22,6 +23,7 @@ import {
   IMAGE_ASPECT_RATIOS,
   IMAGE_PIPELINES,
   IMAGE_PROVIDERS,
+  IMAGE_SAFETY_MODES,
   IMAGE_STYLE_PRESETS,
   PROMPT_PROFILES,
   TEXT_MODELS,
@@ -53,6 +55,8 @@ interface ChatInputProps {
     dataUrl: string
   } | null
   imagePipelineId: ImagePipelineId
+  imageAdultOnly: boolean
+  imageSafetyModeId: ImageSafetyModeId
   enhancePrompt: boolean
   backendHealth?: {
     automatic1111: { status: 'connected' | 'configured' | 'missing' | 'error'; detail: string }
@@ -70,6 +74,8 @@ interface ChatInputProps {
   onReferenceImageChange: (dataUrl: string, name: string) => void
   onReferenceImageRemove: () => void
   onImagePipelineChange: (value: ImagePipelineId) => void
+  onImageAdultOnlyChange: (value: boolean) => void
+  onImageSafetyModeChange: (value: ImageSafetyModeId) => void
   onEnhancePromptChange: (value: boolean) => void
   onOutputModeChange: (value: ChatOutputModeId) => void
   onArtifactFormatChange: (value: ChatArtifactFormatId) => void
@@ -97,6 +103,8 @@ export function ChatInput({
   imageToImageStrength,
   referenceImage,
   imagePipelineId,
+  imageAdultOnly,
+  imageSafetyModeId,
   enhancePrompt,
   backendHealth,
   onTextModelChange,
@@ -110,6 +118,8 @@ export function ChatInput({
   onReferenceImageChange,
   onReferenceImageRemove,
   onImagePipelineChange,
+  onImageAdultOnlyChange,
+  onImageSafetyModeChange,
   onEnhancePromptChange,
   onOutputModeChange,
   onArtifactFormatChange,
@@ -133,10 +143,14 @@ export function ChatInput({
         imageStylePresetId
       const pipelineLabel =
         IMAGE_PIPELINES.find((pipeline) => pipeline.id === imagePipelineId)?.label || imagePipelineId
+      const safetyModeLabel =
+        IMAGE_SAFETY_MODES.find((mode) => mode.id === imageSafetyModeId)?.label ||
+        imageSafetyModeId
+      const adultOnlyLabel = imageAdultOnly ? '18+ ainult' : 'tava'
       const seedLabel = imageSeed === null ? 'seed auto' : `seed ${imageSeed}`
       const referenceLabel = referenceImage ? `ref ${imageToImageStrength}%` : 'ilma refita'
 
-      return `${providerLabel} · ${aspectRatioLabel} · ${stylePresetLabel} · ${pipelineLabel} · ${seedLabel} · var ${imageVariationStrength}% · ${referenceLabel} · ${enhancePrompt ? '3 sammu' : '1 samm'}`
+      return `${providerLabel} | ${aspectRatioLabel} | ${stylePresetLabel} | ${pipelineLabel} | ${safetyModeLabel} | ${adultOnlyLabel} | ${seedLabel} | var ${imageVariationStrength}% | ${referenceLabel} | ${enhancePrompt ? '3 sammu' : '1 samm'}`
     }
 
     const modelLabel = TEXT_MODELS.find((model) => model.id === textModelId)?.label || textModelId
@@ -148,14 +162,16 @@ export function ChatInput({
       CHAT_ARTIFACT_FORMATS.find((format) => format.id === artifactFormat)?.label || artifactFormat
 
     return outputMode === 'chat'
-      ? `${modelLabel} · ${profileLabel} · ${outputModeLabel}`
-      : `${modelLabel} · ${profileLabel} · ${outputModeLabel} · ${formatLabel}`
+      ? `${modelLabel} | ${profileLabel} | ${outputModeLabel}`
+      : `${modelLabel} | ${profileLabel} | ${outputModeLabel} | ${formatLabel}`
   }, [
     artifactFormat,
     enhancePrompt,
+    imageAdultOnly,
     imageAspectRatioId,
     imagePipelineId,
     imageProviderId,
+    imageSafetyModeId,
     imageSeed,
     imageStylePresetId,
     imageToImageStrength,
@@ -391,6 +407,8 @@ export function ChatInput({
               imageSeed={imageSeed}
               imageVariationStrength={imageVariationStrength}
               imagePipelineId={imagePipelineId}
+              imageAdultOnly={imageAdultOnly}
+              imageSafetyModeId={imageSafetyModeId}
               enhancePrompt={enhancePrompt}
               backendHealth={backendHealth}
               onTextModelChange={onTextModelChange}
@@ -401,6 +419,8 @@ export function ChatInput({
               onImageSeedChange={onImageSeedChange}
               onImageVariationStrengthChange={onImageVariationStrengthChange}
               onImagePipelineChange={onImagePipelineChange}
+              onImageAdultOnlyChange={onImageAdultOnlyChange}
+              onImageSafetyModeChange={onImageSafetyModeChange}
               onEnhancePromptChange={onEnhancePromptChange}
             />
           </div>
@@ -471,3 +491,4 @@ export function ChatInput({
     </div>
   )
 }
+

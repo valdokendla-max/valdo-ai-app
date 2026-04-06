@@ -12,12 +12,14 @@ import {
   DEFAULT_IMAGE_ASPECT_RATIO_ID,
   DEFAULT_IMAGE_PIPELINE_ID,
   DEFAULT_IMAGE_PROVIDER_ID,
+  DEFAULT_IMAGE_SAFETY_MODE_ID,
   DEFAULT_PROMPT_PROFILE_ID,
   DEFAULT_IMAGE_STYLE_PRESET_ID,
   DEFAULT_TEXT_MODEL_ID,
   type ImageAspectRatioId,
   type ImagePipelineId,
   type ImageProviderId,
+  type ImageSafetyModeId,
   type ImageStylePresetId,
   type PromptProfileId,
   type TextModelId,
@@ -121,6 +123,10 @@ export default function ValdoAI() {
   const [imagePipelineId, setImagePipelineId] = useState<ImagePipelineId>(
     DEFAULT_IMAGE_PIPELINE_ID
   )
+  const [imageAdultOnly, setImageAdultOnly] = useState(false)
+  const [imageSafetyModeId, setImageSafetyModeId] = useState<ImageSafetyModeId>(
+    DEFAULT_IMAGE_SAFETY_MODE_ID
+  )
   const [enhancePrompt, setEnhancePrompt] = useState(true)
   const [imageStage, setImageStage] = useState<DisplayImageStage>('idle')
   const [backendHealth, setBackendHealth] = useState<BackendHealthResponse | null>(null)
@@ -161,6 +167,8 @@ export default function ValdoAI() {
     setImageVariationStrength(conversation.settings.imageVariationStrength)
     setImageToImageStrength(conversation.settings.imageToImageStrength)
     setImagePipelineId(conversation.settings.imagePipelineId)
+    setImageAdultOnly(conversation.settings.imageAdultOnly)
+    setImageSafetyModeId(conversation.settings.imageSafetyModeId)
     setEnhancePrompt(conversation.settings.enhancePrompt)
     setChatError(undefined)
     setImageError(undefined)
@@ -184,13 +192,17 @@ export default function ValdoAI() {
     imageVariationStrength,
     imageToImageStrength,
     imagePipelineId,
+    imageAdultOnly,
+    imageSafetyModeId,
     enhancePrompt,
   }), [
     artifactFormat,
     enhancePrompt,
+    imageAdultOnly,
     imageAspectRatioId,
     imagePipelineId,
     imageProviderId,
+    imageSafetyModeId,
     imageSeed,
     imageStylePresetId,
     imageToImageStrength,
@@ -374,9 +386,11 @@ export default function ValdoAI() {
     enhancePrompt,
     artifactFormat,
     buildCurrentConversationSettings,
+    imageAdultOnly,
     imageAspectRatioId,
     imagePipelineId,
     imageProviderId,
+    imageSafetyModeId,
     imageSeed,
     imageStylePresetId,
     imageToImageStrength,
@@ -742,6 +756,8 @@ export default function ValdoAI() {
     const activeSeed = imageSeed
     const activeVariationStrength = imageVariationStrength
     const activeImageToImageStrength = imageToImageStrength
+    const activeImageAdultOnly = imageAdultOnly
+    const activeImageSafetyModeId = imageSafetyModeId
     const activeReferenceImage = currentReferenceImage
 
     if (!prompt || isBusy) return
@@ -776,6 +792,8 @@ export default function ValdoAI() {
           referenceImageDataUrl: activeReferenceImage?.dataUrl,
           imageToImageStrength: activeImageToImageStrength,
           pipelineId: activePipelineId,
+          adultOnly: activeImageAdultOnly,
+          safetyModeId: activeImageSafetyModeId,
           enhancePrompt: activeEnhancePrompt,
         }),
         signal: controller.signal,
@@ -970,6 +988,8 @@ export default function ValdoAI() {
         imageVariationStrength={imageVariationStrength}
         activeImageProviderId={activeImageProviderId}
         imagePipelineId={imagePipelineId}
+        imageAdultOnly={imageAdultOnly}
+        imageSafetyModeId={imageSafetyModeId}
         enhancePrompt={enhancePrompt}
         imageStage={imageStage}
         backendHealth={backendHealth}
@@ -1027,6 +1047,8 @@ export default function ValdoAI() {
         imageToImageStrength={imageToImageStrength}
         referenceImage={currentReferenceImage}
         imagePipelineId={imagePipelineId}
+        imageAdultOnly={imageAdultOnly}
+        imageSafetyModeId={imageSafetyModeId}
         enhancePrompt={enhancePrompt}
         backendHealth={backendHealth}
         onTextModelChange={setTextModelId}
@@ -1040,6 +1062,8 @@ export default function ValdoAI() {
         onReferenceImageChange={handleReferenceImageChange}
         onReferenceImageRemove={handleReferenceImageRemove}
         onImagePipelineChange={setImagePipelineId}
+        onImageAdultOnlyChange={setImageAdultOnly}
+        onImageSafetyModeChange={setImageSafetyModeId}
         onEnhancePromptChange={setEnhancePrompt}
         onOutputModeChange={setOutputMode}
         onArtifactFormatChange={setArtifactFormat}

@@ -5,6 +5,7 @@ import {
   getDimensionsForAspectRatio,
   getImagePipeline,
   getImageProvider,
+  getImageSafetyMode,
   getImageStylePreset,
 } from '@/lib/ai-hub'
 import {
@@ -29,13 +30,32 @@ const DEFAULT_IMAGE_STYLE_PROMPT =
   'best quality, highly detailed, crisp focus, cinematic lighting, realistic composition, clean anatomy, coherent subject, readable background, natural textures, well-defined edges'
 
 const DEFAULT_REPLICATE_MODEL = 'black-forest-labs/flux-schnell'
+const DEFAULT_REPLICATE_ULTRA_MODEL = 'black-forest-labs/flux-dev'
 const POLLINATIONS_BASE_URL = 'https://image.pollinations.ai/prompt'
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const ALLOWED_CLIENT_IMAGE_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const ALLOWED_REPLICATE_IMAGE_HOSTS = ['replicate.delivery', '.replicate.delivery']
+const ADULT_ONLY_PROMPT_SUFFIX =
+  'adult person, age 25+, fully mature subject, mature facial features'
+const MINOR_SAFETY_NEGATIVE_PROMPT =
+  'child, children, kid, kids, teen, teenager, underage, minor, adolescent, infant, toddler, baby face'
+const STRICT_SAFETY_NEGATIVE_PROMPT =
+  'explicit sexual act, pornographic framing, explicit nudity focus, genital focus'
+const MINOR_REFERENCE_PATTERN =
+  /\b(child(?:ren)?|kid(?:s)?|teen(?:ager)?s?|teenage|underage|minor(?:s)?|preteen|schoolgirl|schoolboy|loli|lolicon|shota)\b/i
+const ILLEGAL_CONTENT_PATTERN =
+  /\b(rape|raping|non[-\s]?consensual|incest|bestiality)\b/i
+const STRICT_SEXUAL_CONTENT_PATTERN =
+  /\b(porn(?:ography)?|xxx|explicit\s+sex|sexual\s+intercourse|blowjob|anal\s+sex|penetration|cumshot|genitals?)\b/i
+
+type ImageSafetyMode = 'strict' | 'balanced'
 
 const IMAGE_PROMPT_SYSTEM =
-  'Rewrite the user image request into one concise English prompt for an image model. Preserve the core request exactly: subject, action, scene, camera angle, mood, clothing, colors, material details, lens/framing, and composition when they are explicitly stated. Translate Estonian or mixed-language requests into natural English. Prioritize clarity, sharpness, subject separation, and accurate anatomy without adding unrelated objects, story details, or style changes that were not requested. If something is vague, keep it simple instead of inventing extra content. Return only the final English prompt, no quotes, no labels, no markdown.'
+  'You optimize prompts for high-end text-to-image models. Rewrite the user request into one concise but richly descriptive English prompt. Preserve the exact requested subject, action, scene, camera angle, mood, clothing, colors, material details, and composition. Translate Estonian or mixed-language requests into natural English. Strengthen only image-relevant quality cues such as lighting, lens/framing, depth, anatomy, textures, separation, and scene coherence. Respect any provided style preset, aspect ratio, and quality target. Do not add unrelated objects, story details, extra characters, text overlays, watermarks, or brand names unless explicitly requested. Return only the final prompt, with no quotes, labels, bullets, or markdown.'
+
+function isReplicateAutoAllowed() {
+  return process.env.ALLOW_REPLICATE_AUTO === 'true'
+}
 
 type ComfyImage = {
   filename: string
@@ -215,7 +235,9 @@ async function prepareReferenceImageBase64(
     .resize({
       width,
       height,
-      fit: 'cover',
+      // Preserve the full reference image instead of cropping it to the target ratio.
+      fit: 'contain',
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
       kernel: sharp.kernel.lanczos3,
     })
     .png()
@@ -429,12 +451,63 @@ function buildFallbackImagePrompt(
   stylePresetId?: string
 ) {
   const stylePreset = getImageStylePreset(stylePresetId)
-  return `${prompt}, ${DEFAULT_IMAGE_STYLE_PROMPT}, ${pipeline.promptStyle}, ${stylePreset.promptStyle}`
+  return [
+    prompt,
+    DEFAULT_IMAGE_STYLE_PROMPT,
+    pipeline.promptStyle,
+    stylePreset.promptStyle,
+  ]
+    .filter(Boolean)
+    .join(', ')
 }
 
 function buildNegativePrompt(stylePresetId?: string) {
   const stylePreset = getImageStylePreset(stylePresetId)
   return `${DEFAULT_NEGATIVE_PROMPT}, ${stylePreset.negativePrompt}`
+}
+
+function normalizeSafetyMode(safetyModeId?: string): ImageSafetyMode {
+  const selectedMode = getImageSafetyMode(safetyModeId)
+  return selectedMode.id
+}
+
+function validatePromptSafety(prompt: string, safetyMode: ImageSafetyMode) {
+  if (MINOR_REFERENCE_PATTERN.test(prompt)) {
+    return 'Prompt viitab alaealisele. Kasuta ainult taisealiste (18+) subjektide kirjeldusi.'
+  }
+
+  if (ILLEGAL_CONTENT_PATTERN.test(prompt)) {
+    return 'Prompt sisaldab keelatud voi ebaseaduslikku sisusoovi.'
+  }
+
+  if (safetyMode === 'strict' && STRICT_SEXUAL_CONTENT_PATTERN.test(prompt)) {
+    return 'Strict turvareziim blokeerib selgesonaliselt seksuaalsed promptid.'
+  }
+
+  return null
+}
+
+function applyAdultOnlyPromptGuard(prompt: string, adultOnly: boolean) {
+  const trimmedPrompt = prompt.trim()
+
+  if (!adultOnly) {
+    return trimmedPrompt
+  }
+
+  return `${trimmedPrompt}, ${ADULT_ONLY_PROMPT_SUFFIX}`
+}
+
+function buildEffectiveNegativePrompt(
+  stylePresetId: string | undefined,
+  safetyMode: ImageSafetyMode
+) {
+  const parts = [buildNegativePrompt(stylePresetId), MINOR_SAFETY_NEGATIVE_PROMPT]
+
+  if (safetyMode === 'strict') {
+    parts.push(STRICT_SAFETY_NEGATIVE_PROMPT)
+  }
+
+  return parts.join(', ')
 }
 
 function resolveImageSeed(seed?: number | null, variationStrength?: number) {
@@ -460,7 +533,9 @@ async function optimizeImagePrompt(
   signal: AbortSignal,
   pipeline: ReturnType<typeof getImagePipeline>,
   enhancePrompt: boolean,
-  stylePresetId?: string
+  stylePresetId?: string,
+  aspectRatioId?: string,
+  hasReferenceImage?: boolean
 ) {
   const cleanedPrompt = prompt.trim()
 
@@ -477,12 +552,23 @@ async function optimizeImagePrompt(
   }
 
   try {
+    const stylePreset = getImageStylePreset(stylePresetId)
     const result = await generateText({
       model: groq('llama-3.3-70b-versatile'),
       system: IMAGE_PROMPT_SYSTEM,
-      prompt: cleanedPrompt,
+      prompt: [
+        `User request: ${cleanedPrompt}`,
+        `Quality target: ${pipeline.label}.`,
+        `Pipeline rendering cues: ${pipeline.promptStyle}.`,
+        `Style preset: ${stylePreset.label}.`,
+        `Style cues: ${stylePreset.promptStyle}.`,
+        `Aspect ratio: ${aspectRatioId || '1:1'}.`,
+        hasReferenceImage
+          ? 'Reference image: yes. Preserve the source composition, silhouette, and subject identity unless the prompt explicitly requests changes.'
+          : 'Reference image: no. Build the composition from the prompt alone.',
+      ].join('\n'),
       abortSignal: signal,
-      temperature: 0.2,
+      temperature: pipeline.id === 'ultra' ? 0.15 : 0.2,
     })
 
     const optimizedPrompt = result.text.trim().replace(/^"|"$/g, '')
@@ -913,7 +999,10 @@ async function createReplicateImage(
     return null
   }
 
-  const model = process.env.REPLICATE_MODEL || DEFAULT_REPLICATE_MODEL
+  const model =
+    pipeline.id === 'ultra'
+      ? process.env.REPLICATE_ULTRA_MODEL || DEFAULT_REPLICATE_ULTRA_MODEL
+      : process.env.REPLICATE_MODEL || DEFAULT_REPLICATE_MODEL
   const [owner, name] = model.split('/')
 
   if (!owner || !name) {
@@ -1009,6 +1098,39 @@ async function createReplicateImage(
   throw new Error('Replicate image generation timed out.')
 }
 
+function getAutoProviderOrder(
+  pipeline: ReturnType<typeof getImagePipeline>,
+  hasReferenceImage: boolean
+): RuntimeImageProviderId[] {
+  if (hasReferenceImage) {
+    return sortProvidersForAuto(['comfyui', 'automatic1111'])
+  }
+
+  const allowReplicateAuto = isReplicateAutoAllowed()
+
+  if (pipeline.id === 'ultra') {
+    return sortProvidersForAuto(
+      allowReplicateAuto
+        ? ['comfyui', 'automatic1111', 'replicate']
+        : ['comfyui', 'automatic1111']
+    )
+  }
+
+  if (pipeline.id === 'quality') {
+    return sortProvidersForAuto(
+      allowReplicateAuto
+        ? ['comfyui', 'automatic1111', 'replicate']
+        : ['comfyui', 'automatic1111']
+    )
+  }
+
+  return sortProvidersForAuto(
+    allowReplicateAuto
+      ? ['comfyui', 'automatic1111', 'replicate']
+      : ['comfyui', 'automatic1111']
+  )
+}
+
 async function createComfyUIImage(
   prompt: string,
   signal: AbortSignal,
@@ -1079,6 +1201,8 @@ export async function POST(req: Request) {
     seed?: number | null
     variationStrength?: number
     enhancePrompt?: boolean
+    adultOnly?: boolean
+    safetyModeId?: ImageSafetyMode
     imageDataUrl?: string
     referenceImageDataUrl?: string
     imageToImageStrength?: number
@@ -1103,6 +1227,8 @@ export async function POST(req: Request) {
     seed,
     variationStrength,
     enhancePrompt,
+    adultOnly,
+    safetyModeId,
     imageDataUrl,
     referenceImageDataUrl,
     imageToImageStrength,
@@ -1152,8 +1278,20 @@ export async function POST(req: Request) {
     const selectedPipeline = getImagePipeline(pipelineId)
     const shouldEnhance = enhancePrompt !== false
     const trimmedPrompt = prompt?.trim() || ''
+    const safetyMode = normalizeSafetyMode(safetyModeId)
+    const adultOnlyEnabled = adultOnly === true
+    const promptSafetyError = validatePromptSafety(trimmedPrompt, safetyMode)
+
+    if (promptSafetyError) {
+      return new Response(JSON.stringify({ error: promptSafetyError }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    const effectivePrompt = applyAdultOnlyPromptGuard(trimmedPrompt, adultOnlyEnabled)
     const resolvedSeed = resolveImageSeed(seed, variationStrength)
-    const negativePrompt = buildNegativePrompt(stylePresetId)
+    const negativePrompt = buildEffectiveNegativePrompt(stylePresetId, safetyMode)
     const hasReferenceImage = Boolean(referenceImageDataUrl?.trim())
 
     if (referenceImageDataUrl) {
@@ -1166,11 +1304,13 @@ export async function POST(req: Request) {
       (selectedProvider.id === 'auto' || selectedProvider.id === 'comfyui')
     const effectiveEnhancePrompt = useFastComfyReferenceMode ? false : shouldEnhance
     const optimizedPrompt = await optimizeImagePrompt(
-      trimmedPrompt,
+      effectivePrompt,
       req.signal,
       selectedPipeline,
       effectiveEnhancePrompt,
-      stylePresetId
+      stylePresetId,
+      aspectRatioId,
+      hasReferenceImage
     )
     const hasAutomatic1111 = Boolean(process.env.AUTOMATIC1111_BASE_URL)
     const hasComfy = Boolean(process.env.COMFYUI_BASE_URL)
@@ -1192,16 +1332,11 @@ export async function POST(req: Request) {
     let imageDataUrl: string | null = null
     let lastError: Error | null = null
     let resolvedProviderId: RuntimeImageProviderId | null = null
-    const autoProviderOrder = sortProvidersForAuto([
-      'automatic1111',
-      'pollinations',
-      'comfyui',
-      'replicate',
-    ])
+    const autoProviderOrder = getAutoProviderOrder(selectedPipeline, hasReferenceImage)
     const providerOrder: RuntimeImageProviderId[] =
       hasReferenceImage
         ? selectedProvider.id === 'auto'
-          ? sortProvidersForAuto(['automatic1111', 'comfyui'])
+          ? autoProviderOrder
           : [selectedProvider.id as RuntimeImageProviderId]
         : selectedProvider.id === 'auto'
         ? autoProviderOrder
